@@ -92,7 +92,11 @@ function App() {
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [boardOrientation, setBoardOrientation] = useState('white');
-  const [playerNames, setPlayerNames] = useState({ white: 'White', black: 'Black' });
+  const [playerNames, setPlayerNames] = useState({ 
+    white: 'White', black: 'Black', 
+    whiteElo: '', blackElo: '',
+    whiteAvatar: null, blackAvatar: null 
+  });
   const [language, setLanguage] = useState('es'); // Language toggle state
   
   // UI & API STATE
@@ -135,12 +139,37 @@ function App() {
       .catch(console.error);
   }, []);
 
-  const handleImportPgn = useCallback((pgnString) => {
+  const fetchAvatar = useCallback(async (username) => {
+    try {
+      console.log('Fetching avatar for:', username);
+      const response = await fetch(`https://api.chess.com/pub/player/${username}`);
+      if (!response.ok) {
+        console.log('Avatar fetch failed for:', username, response.status);
+        return null;
+      }
+      const data = await response.json();
+      console.log('Avatar data for:', username, data);
+      return data.avatar || null;
+    } catch (error) {
+      console.error('Error fetching avatar:', error);
+      return null;
+    }
+  }, []);
+
+  const handleImportPgn = useCallback(async (pgnString) => {
     try {
       if (pgnString.includes('1.') || pgnString.includes('[')) {
         const whiteName = pgnString.match(/\[White "(.*)"\]/)?.[1] || 'White';
         const blackName = pgnString.match(/\[Black "(.*)"\]/)?.[1] || 'Black';
-        setPlayerNames({ white: whiteName, black: blackName });
+        const whiteElo = pgnString.match(/\[WhiteElo "(.*)"\]/)?.[1] || '';
+        const blackElo = pgnString.match(/\[BlackElo "(.*)"\]/)?.[1] || '';
+        
+        const [whiteAvatar, blackAvatar] = await Promise.all([
+          fetchAvatar(whiteName),
+          fetchAvatar(blackName)
+        ]);
+        
+        setPlayerNames({ white: whiteName, black: blackName, whiteElo, blackElo, whiteAvatar, blackAvatar });
         
         const moveString = pgnString.replace(/\[.*\]/g, '').replace(/\d+\./g, '').replace(/\*/g, '').replace(/0-1|1-0|1\/2-1\/2/g, '').trim();
         const moves = moveString.split(/\s+/);
@@ -408,14 +437,22 @@ function App() {
         </div>
 
         <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-8 overflow-hidden text-center">
-          <div className="mb-4 font-bold text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left">
+          <div className="mb-4 font-bold text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center gap-2">
+            <div className="w-8 h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden">
+              {boardOrientation === 'white' ? (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?') : (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?')}
+            </div>
             {boardOrientation === 'white' ? playerNames.black : playerNames.white}
+            {boardOrientation === 'white' ? (playerNames.blackElo ? `(${playerNames.blackElo})` : '') : (playerNames.whiteElo ? `(${playerNames.whiteElo})` : '')}
           </div>
           <div className="relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg">
             <div ref={boardRef} style={{ width: 'min(70vh, 70vw)', height: 'min(70vh, 70vw)' }} />
           </div>
-          <div className="mt-4 font-bold text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left">
+          <div className="mt-4 font-bold text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center gap-2">
+            <div className="w-8 h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden">
+              {boardOrientation === 'white' ? (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?') : (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?')}
+            </div>
             {boardOrientation === 'white' ? playerNames.white : playerNames.black}
+            {boardOrientation === 'white' ? (playerNames.whiteElo ? `(${playerNames.whiteElo})` : '') : (playerNames.blackElo ? `(${playerNames.blackElo})` : '')}
           </div>
 
           <div className="mt-8 flex gap-3 items-center">
