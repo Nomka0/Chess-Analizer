@@ -8,7 +8,6 @@ import ImportModal from './components/ImportModal';
 import Header from './components/Header';
 import AnalysisView from './components/AnalysisView';
 import MatchProgress from './components/MatchProgress';
-// ...
 import { ArrowUpDown, ChevronLeft, ChevronRight, SkipBack, SkipForward } from 'lucide-react';
 
 const markdownComponents = {
@@ -44,8 +43,7 @@ const translations = {
     mistake: "mistake",
     blunder: "blunder",
     fenPlaceholder: "Paste your FEN here...",
-    pgnPlaceholder: "Paste your PGN here...",
-    serverActive: "Server Active"
+    pgnPlaceholder: "Paste your PGN here..."
   },
   es: {
     title: "Chess Analyzer Pro",
@@ -72,8 +70,7 @@ const translations = {
     mistake: "error",
     blunder: "grave",
     fenPlaceholder: "Pega tu FEN aquí...",
-    pgnPlaceholder: "Pega tu PGN aquí...",
-    serverActive: "Servidor Activo"
+    pgnPlaceholder: "Pega tu PGN aquí..."
   }
 };
 
@@ -111,10 +108,10 @@ function App() {
   const [tempInput, setFenInput] = useState('');
   
   // RESIZING STATES
-  const [sidebarWidth, setSidebarWidth] = useState(650); // Un poco más ancho por defecto ya que ahora se divide en dos columnas
-  const [moveListWidth, setMoveListWidth] = useState(200); // Ahora controla el ANCHO de la lista de jugadas
+  const [sidebarWidth, setSidebarWidth] = useState(950);
+  const [moveListWidth, setMoveListWidth] = useState(200);
   const isResizingH = useRef(false);
-  const isResizingV = useRef(false); // Mantengo el nombre de la ref, pero ahora redimensiona horizontalmente la lista interna
+  const isResizingV = useRef(false);
 
   const boardRef = useRef(null);
   const cg = useRef(null);
@@ -123,13 +120,16 @@ function App() {
   
   const t = translations[language];
   const currentFen = game.fen();
-  const currentAnalysis = useMemo(() => batchAnalysisResults[currentFen] || null, [currentFen, batchAnalysisResults]);
+  const currentAnalysis = useMemo(() => {
+      const analysis = batchAnalysisResults[currentFen] || null;
+      console.log('Current FEN:', currentFen, 'Analysis:', analysis);
+      return analysis;
+  }, [currentFen, batchAnalysisResults]);
   const evalScore = currentAnalysis?.score || 0;
   
   const whiteScoreStr = (evalScore / 100).toFixed(1);
   const blackScoreStr = (-evalScore / 100).toFixed(1);
-  const winPercent = Math.max(5, Math.min(95, 50 + ((boardOrientation === 'white' ? evalScore : -evalScore) / 20))); 
-
+  const winPercent = Math.max(5, Math.min(95, 50 + (evalScore / 20)));
   // INITIALIZATION
   useEffect(() => {
     fetch('http://localhost:3000/api/models')
@@ -231,7 +231,6 @@ function App() {
     if (isResizingV.current) {
         const sidebarRect = sidebarRef.current?.getBoundingClientRect();
         if (sidebarRect) {
-            // Ahora calculamos el movimiento horizontal (X) para la lista de movimientos
             const newWidth = e.clientX - sidebarRect.left;
             if (newWidth > 120 && newWidth < 400) setMoveListWidth(newWidth);
         }
@@ -249,7 +248,7 @@ function App() {
     isResizingV.current = true;
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', stopResizing);
-    document.body.style.cursor = 'col-resize'; // Cambiado a col-resize ya que ahora se mueve en horizontal
+    document.body.style.cursor = 'col-resize';
   }, [handleMouseMove, stopResizing]);
 
   useEffect(() => {
@@ -381,83 +380,90 @@ function App() {
 
       <main className="flex-grow relative h-0">
         <div className="absolute inset-0 flex overflow-hidden">
-        {/* EVAL BAR */}
-        <div className={`w-10 flex flex-col border-r border-slate-800 z-10 justify-end ${boardOrientation === 'white' ? 'bg-slate-900' : 'bg-white'}`}>
-            <div
-                className={`w-full transition-all duration-500 ${boardOrientation === 'white' ? 'bg-white' : 'bg-slate-900'}`}
-                style={{ height: `${winPercent}%` }}
-            />
-            <div className="absolute top-0 w-full py-2 flex flex-col items-center text-[9px] font-black pointer-events-none mix-blend-difference">
-                <span className="text-white">
-                    {boardOrientation === 'white' ? blackScoreStr : (evalScore > 0 ? `+${whiteScoreStr}` : whiteScoreStr)}
-                </span>
-            </div>
-            <div className="absolute bottom-0 w-full py-2 flex flex-col items-center text-[9px] font-black pointer-events-none mix-blend-difference">
-                <span className="text-white">
-                    {boardOrientation === 'white' ? (evalScore > 0 ? `+${whiteScoreStr}` : whiteScoreStr) : blackScoreStr}
-                </span>
-            </div>
-        </div>
-
-        <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-2 sm:p-4 overflow-hidden text-center max-h-full">
-          <div className="mb-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center gap-2 shrink-0">
-            <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
-              {boardOrientation === 'white' ? (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?') : (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?')}
-            </div>
-            <span className="truncate">
-              {boardOrientation === 'white' ? playerNames.black : playerNames.white}
-              {boardOrientation === 'white' ? (playerNames.blackElo ? ` (${playerNames.blackElo})` : '') : (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '')}
-            </span>
+          
+          {/* BARRA DE EVALUACIÓN */}
+          <div className={`w-10 flex flex-col border-r border-slate-800 z-10 justify-end relative ${boardOrientation === 'white' ? 'bg-slate-900' : 'bg-white'}`}>
+              <div
+                  className={`w-full transition-all duration-500 ${boardOrientation === 'white' ? 'bg-white' : 'bg-slate-900'}`}
+                  style={{ height: `${winPercent}%` }}
+              />
+              <div className="absolute inset-0 flex flex-col justify-between py-2 text-[10px] font-black pointer-events-none">
+                  <div className="text-center mix-blend-difference text-white">
+                      {boardOrientation === 'white' ? blackScoreStr : (evalScore > 0 ? `+${whiteScoreStr}` : whiteScoreStr)}
+                  </div>
+                  <div className="text-center mix-blend-difference text-white">
+                      {boardOrientation === 'white' ? (evalScore > 0 ? `+${whiteScoreStr}` : whiteScoreStr) : blackScoreStr}
+                  </div>
+              </div>
           </div>
-          <div className="relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg shrink min-h-0">
-            <div ref={boardRef} style={{ width: 'min(70vh, 70vw)', height: 'min(70vh, 70vw)' }} />
-          </div>
-          <div className="mt-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center gap-2 shrink-0">
-            <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
-              {boardOrientation === 'white' ? (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?') : (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?')}
-            </div>
-            <span className="truncate">
-              {boardOrientation === 'white' ? playerNames.white : playerNames.black}
-              {boardOrientation === 'white' ? (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '') : (playerNames.blackElo ? ` (${playerNames.blackElo})` : '')}
-            </span>
-          </div>
-          <div className="mt-4 sm:mt-8 flex gap-2 sm:gap-3 items-center shrink-0">
-            <button onClick={() => navigateHistory(-Infinity)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipBack className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-            <button onClick={() => navigateHistory(-1)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-            <button onClick={handleFlip} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ArrowUpDown className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-            <button onClick={() => navigateHistory(1)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-            <button onClick={() => navigateHistory(Infinity)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipForward className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-          </div>
-          <div className="mt-2 sm:mt-4 opacity-50 flex items-center gap-2 text-[9px] sm:text-[10px] font-bold uppercase tracking-widest shrink-0">
-            <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-emerald-500"></div>
-            {t.serverActive}
-          </div>
-        </div>
-        
-        {/* BARRA DE REDIMENSIONADO PRINCIPAL (Horizontal) */}
-        <div onMouseDown={startResizingH} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10" />
-
-        {/* CAMBIO CLAVE: Cambiado de flex-col a flex-row para poner los componentes lado a lado */}
-        <div ref={sidebarRef} style={{ width: `${sidebarWidth}px` }} className="bg-[#161b22] border-l border-slate-800 flex flex-row shrink-0 h-full overflow-hidden">
-            <div style={{ width: `${moveListWidth}px` }} className="border-r border-slate-800 flex flex-col shrink-0 h-full">
-                <MatchProgress 
-                    t={t}
-                    history={history}
-                    batchAnalysisResults={batchAnalysisResults}
-                    historyIndex={historyIndex}
-                    navigateHistory={navigateHistory}
-                    historyContainerRef={historyContainerRef}
-                />
-            </div>
+          
+          {/* CONTENEDOR DEL TABLERO */}
+          <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-2 sm:p-4 overflow-hidden text-center max-h-full">
             
-            <div onMouseDown={startResizingV} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10 h-full" />
+            {/* Jugador Superior */}
+            <div className="mb-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center gap-2 shrink-0">
+              <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
+                {boardOrientation === 'white' ? (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?') : (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?')}
+              </div>
+              <span className="truncate">
+                {boardOrientation === 'white' ? playerNames.black : playerNames.white}
+                {boardOrientation === 'white' ? (playerNames.blackElo ? ` (${playerNames.blackElo})` : '') : (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '')}
+              </span>
+            </div>
 
-            <AnalysisView 
-              currentAnalysis={currentAnalysis}
-              t={t}
-              markdownComponents={markdownComponents}
-            />
-        </div>
+            {/* Tablero */}
+            <div className="relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg shrink min-h-0">
+              <div ref={boardRef} style={{ width: 'min(70vh, 70vw)', height: 'min(70vh, 70vw)' }} />
+            </div>
+
+            {/* Jugador Inferior */}
+            <div className="mt-1 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center gap-2 shrink-0">
+              <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
+                {boardOrientation === 'white' ? (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?') : (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?')}
+              </div>
+              <span className="truncate">
+                {boardOrientation === 'white' ? playerNames.white : playerNames.black}
+                {boardOrientation === 'white' ? (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '') : (playerNames.blackElo ? ` (${playerNames.blackElo})` : '')}
+              </span>
+            </div>
+
+            {/* Controles de Navegación */}
+            <div className="mt-1.5 flex gap-2 sm:gap-3 items-center shrink-0">
+              <button onClick={() => navigateHistory(-Infinity)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipBack className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+              <button onClick={() => navigateHistory(-1)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+              <button onClick={handleFlip} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ArrowUpDown className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+              <button onClick={() => navigateHistory(1)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+              <button onClick={() => navigateHistory(Infinity)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipForward className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+            </div>
+
+          </div>
+
+          {/* BARRA DE REDIMENSIONADO PRINCIPAL */}
+          <div onMouseDown={startResizingH} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10" />
+
+          {/* SIDEBAR */}
+          <div ref={sidebarRef} style={{ width: `${sidebarWidth}px` }} className="bg-[#161b22] border-l border-slate-800 flex flex-row shrink-0 h-full overflow-hidden">
+              <AnalysisView 
+                currentAnalysis={currentAnalysis}
+                t={t}
+                markdownComponents={markdownComponents}
+              />
+              
+              <div onMouseDown={startResizingV} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10 h-full" />
+
+              <div style={{ width: `${moveListWidth}px` }} className="border-l border-slate-800 flex flex-col shrink-0 h-full">
+                  <MatchProgress 
+                      t={t}
+                      history={history}
+                      batchAnalysisResults={batchAnalysisResults}
+                      historyIndex={historyIndex}
+                      navigateHistory={navigateHistory}
+                      historyContainerRef={historyContainerRef}
+                  />
+
+              </div>
+          </div>
+
         </div>
       </main>
     </div>
