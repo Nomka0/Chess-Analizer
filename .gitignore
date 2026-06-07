@@ -64,3 +64,14 @@ temp/
 # Docs
 docs/
 
+# --- Reglas específicas para Chess Analyzer ---
+
+# Ignorar las dependencias en las subcarpetas (¡Muy importante!)
+backend/node_modules/
+frontend/node_modules/
+
+# Ignorar las carpetas de producción/compilación de Vite
+frontend/dist/
+
+# Ignorar el caché del análisis que vi en tu backend
+backend/analysis_cache.json
