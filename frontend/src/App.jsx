@@ -74,17 +74,6 @@ const translations = {
   }
 };
 
-function classifyMove(score, prevScore) {
-    if (score === null || prevScore === null) return 'good';
-    const diff = score - prevScore;
-    if (diff > -30) return 'best';
-    if (diff > -80) return 'excellent';
-    if (diff > -150) return 'good';
-    if (diff > -300) return 'inaccuracy';
-    if (diff > -600) return 'mistake';
-    return 'blunder';
-}
-
 function App() {
   // CORE STATE
   const [game, setGame] = useState(new Chess());
@@ -98,10 +87,24 @@ function App() {
   });
   const [language, setLanguage] = useState('es'); 
   
-  // UI & API STATE
+  // Accuracy state
+  const [accuracy, setAccuracy] = useState({ white: 0, black: 0 });
   const [isLoading, setIsLoading] = useState(false);
   const [batchAnalysisResults, setBatchAnalysisResults] = useState({});
   const [models, setModels] = useState([]);
+
+  // CAPS System Helper Functions
+  const centipawnsToWinProb = (cp) => 1 / (1 + Math.pow(10, -cp / 400));
+  
+  const getClassification = (impact) => {
+      if (impact < 1.5) return 'best';
+      if (impact < 4.0) return 'excellent';
+      if (impact < 8.0) return 'good';
+      if (impact < 15.0) return 'inaccuracy';
+      if (impact < 25.0) return 'mistake';
+      return 'blunder';
+  };
+
   const [selectedModel, setSelectedModel] = useState('');
   const [copied, setCopied] = useState(false);
   const [showImportModal, setShowImportModal] = useState(null); 
@@ -120,16 +123,21 @@ function App() {
   
   const t = translations[language];
   const currentFen = game.fen();
+  
   const currentAnalysis = useMemo(() => {
-      const analysis = batchAnalysisResults[currentFen] || null;
-      console.log('Current FEN:', currentFen, 'Analysis:', analysis);
-      return analysis;
+      return batchAnalysisResults[currentFen] || null;
   }, [currentFen, batchAnalysisResults]);
+
   const evalScore = currentAnalysis?.score || 0;
   
   const whiteScoreStr = (evalScore / 100).toFixed(1);
   const blackScoreStr = (-evalScore / 100).toFixed(1);
-  const winPercent = Math.max(5, Math.min(95, 50 + (evalScore / 20)));
+  
+  // Barra de evaluación usando el modelo matemático sigmoide (Igual a Chess.com)
+  const winPercent = useMemo(() => {
+    return Math.max(5, Math.min(95, centipawnsToWinProb(evalScore) * 100));
+  }, [evalScore]);
+
   // INITIALIZATION
   useEffect(() => {
     fetch('http://localhost:3000/api/models')
@@ -190,6 +198,7 @@ function App() {
         setHistoryIndex(-1);
       }
       setBatchAnalysisResults({});
+      setAccuracy({ white: 0, black: 0 });
       setShowImportModal(null);
       setFenInput('');
     } catch (e) { alert("Import Error: " + e.message); }
@@ -314,13 +323,12 @@ function App() {
     const positions = [{ fen: tempGame.fen() }];
     for (const move of history) {
         tempGame.move(move);
-        positions.push({ fen: tempGame.fen() });
+        positions.push({ fen: tempGame.fen(), san: move.san });
     }
 
+    // 1. Obtener evaluaciones rápidas para todos los estados de la partida
+    const allEvals = {};
     const CHUNK_SIZE = 10;
-    const currentResults = {};
-    let lastScore = 0;
-
     for (let i = 0; i < positions.length; i += CHUNK_SIZE) {
         const chunk = positions.slice(i, i + CHUNK_SIZE);
         try {
@@ -329,24 +337,82 @@ function App() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ fens: chunk.map(p => p.fen) })
             })).json();
-
-            for (const ev of evals) {
-                const classification = classifyMove(ev.score, lastScore);
-                currentResults[ev.fen] = { ...ev, classification };
-                
-                if (['inaccuracy', 'mistake', 'blunder'].includes(classification) || i === 0) {
-                    const aiRes = await (await fetch('http://localhost:3000/api/analyze', {
-                        method: 'POST',
-                        headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ fen: ev.fen, model: selectedModel, language })
-                    })).json();
-                    currentResults[ev.fen].analysis = aiRes.analysis;
-                }
-                lastScore = ev.score || 0;
-                setBatchAnalysisResults({ ...currentResults });
-            }
+            evals.forEach((ev, idx) => {
+                allEvals[chunk[idx].fen] = ev.score;
+            });
         } catch (e) { console.error(e); }
     }
+
+    const currentResults = {};
+    const analysisCache = {};
+    let wPerf = 0, bPerf = 0, wMoves = 0, bMoves = 0;
+
+    // Colocar la posición inicial por defecto en el mapa
+    currentResults[positions[0].fen] = { score: allEvals[positions[0].fen] || 0, classification: 'best', analysis: '', bestmove: '' };
+
+    for (let i = 1; i < positions.length; i++) {
+        const prevPos = positions[i - 1];
+        const currentPos = positions[i];
+        
+        const prevGame = new Chess(prevPos.fen);
+        const movingPlayer = prevGame.turn();
+
+        try {
+            // Check cache before fetching
+            let aiRes = analysisCache[prevPos.fen];
+            if (!aiRes) {
+                aiRes = await (await fetch('http://localhost:3000/api/analyze', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({ fen: prevPos.fen, model: selectedModel, language })
+                })).json();
+                analysisCache[prevPos.fen] = aiRes;
+            }
+
+            const bestScore = aiRes.bestScore; 
+            let actualScore = allEvals[currentPos.fen] || 0;
+
+            // Alineamos la perspectiva del movimiento resultante con el jugador activo
+            // Si el motor devuelve resultados relativos al bando del turno actual:
+            if (movingPlayer === 'b') {
+                actualScore = -actualScore; 
+            }
+
+            const bestProb = centipawnsToWinProb(bestScore);
+            const actualProb = centipawnsToWinProb(actualScore);
+            
+            const impact = Math.max(0, bestProb - actualProb) * 100;
+            const classification = getClassification(impact);
+
+            // Estandarizamos el score para la UI (Perspectiva de las blancas para la barra)
+            const currentGame = new Chess(currentPos.fen);
+            const uiScore = currentGame.turn() === 'b' ? -(allEvals[currentPos.fen] || 0) : (allEvals[currentPos.fen] || 0);
+
+            currentResults[currentPos.fen] = { 
+                score: uiScore, 
+                classification, 
+                analysis: aiRes.analysis, 
+                bestmove: aiRes.bestmove 
+            };
+
+            // Acumular métricas para el cálculo CAPS final
+            if (movingPlayer === 'w') {
+                wPerf += (100 - impact);
+                wMoves++;
+            } else {
+                bPerf += (100 - impact);
+                bMoves++;
+            }
+
+            // Actualización progresiva en caliente
+            setBatchAnalysisResults({ ...currentResults });
+        } catch (e) { console.error(e); }
+    }
+
+    setAccuracy({ 
+        white: wMoves ? (wPerf / wMoves).toFixed(1) : "0.0", 
+        black: bMoves ? (bPerf / bMoves).toFixed(1) : "0.0" 
+    });
     setIsLoading(false);
   }
 
@@ -401,14 +467,21 @@ function App() {
           <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-2 sm:p-4 overflow-hidden text-center max-h-full">
             
             {/* Jugador Superior */}
-            <div className="mb-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center gap-2 shrink-0">
-              <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
-                {boardOrientation === 'white' ? (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?') : (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?')}
+            <div className="mb-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2 truncate">
+                <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
+                  {boardOrientation === 'white' ? (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?') : (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?')}
+                </div>
+                <span className="truncate">
+                  {boardOrientation === 'white' ? playerNames.black : playerNames.white}
+                  {boardOrientation === 'white' ? (playerNames.blackElo ? ` (${playerNames.blackElo})` : '') : (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '')}
+                </span>
               </div>
-              <span className="truncate">
-                {boardOrientation === 'white' ? playerNames.black : playerNames.white}
-                {boardOrientation === 'white' ? (playerNames.blackElo ? ` (${playerNames.blackElo})` : '') : (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '')}
-              </span>
+              {accuracy.white > 0 && (
+                <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-violet-400 font-mono shrink-0">
+                  Acc: {boardOrientation === 'white' ? accuracy.black : accuracy.white}%
+                </span>
+              )}
             </div>
 
             {/* Tablero */}
@@ -417,17 +490,24 @@ function App() {
             </div>
 
             {/* Jugador Inferior */}
-            <div className="mt-1 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center gap-2 shrink-0">
-              <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
-                {boardOrientation === 'white' ? (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?') : (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?')}
+            <div className="mt-1 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center justify-between gap-2 shrink-0">
+              <div className="flex items-center gap-2 truncate">
+                <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
+                  {boardOrientation === 'white' ? (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?') : (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?')}
+                </div>
+                <span className="truncate">
+                  {boardOrientation === 'white' ? playerNames.white : playerNames.black}
+                  {boardOrientation === 'white' ? (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '') : (playerNames.blackElo ? ` (${playerNames.blackElo})` : '')}
+                </span>
               </div>
-              <span className="truncate">
-                {boardOrientation === 'white' ? playerNames.white : playerNames.black}
-                {boardOrientation === 'white' ? (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '') : (playerNames.blackElo ? ` (${playerNames.blackElo})` : '')}
-              </span>
+              {accuracy.white > 0 && (
+                <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-emerald-400 font-mono shrink-0">
+                  Acc: {boardOrientation === 'white' ? accuracy.white : accuracy.black}%
+                </span>
+              )}
             </div>
 
-            {/* Controles de Navegación */}
+            {/* Controles de Navegación (Manteniendo espacios compactos de diseño) */}
             <div className="mt-1.5 flex gap-2 sm:gap-3 items-center shrink-0">
               <button onClick={() => navigateHistory(-Infinity)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipBack className="w-4 h-4 sm:w-5 sm:h-5" /></button>
               <button onClick={() => navigateHistory(-1)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
@@ -460,7 +540,6 @@ function App() {
                       navigateHistory={navigateHistory}
                       historyContainerRef={historyContainerRef}
                   />
-
               </div>
           </div>
 

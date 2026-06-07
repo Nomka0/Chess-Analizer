@@ -1,6 +1,6 @@
 import express from 'express';
 import cors from 'cors';
-import stockfish from 'stockfish';
+import { spawn } from 'child_process';
 import ollama from 'ollama';
 import { getCachedAnalysis, setCachedAnalysis } from './cache.js';
 
@@ -17,31 +17,49 @@ let currentReject = null;
 let bestMove = null;
 let score = null;
 let scoreType = 'cp';
-let uciOutputs = [];
 
-// Initialize Stockfish engine once during server start
+// Initialize native Stockfish engine
 async function initStockfish() {
-  return new Promise(async (resolve, reject) => {
+  return new Promise((resolve, reject) => {
     try {
-      console.log("[Stockfish] Loading WASM chess engine...");
-      engine = await stockfish();
-      
-      // Hijack process.stdout to parse UCI output
-      const originalWrite = process.stdout.write;
-      process.stdout.write = (chunk, encoding, callback) => {
-        const str = chunk.toString();
-        const lines = str.split('\n');
+      console.log("[Stockfish] Spawning native engine...");
+      engine = spawn('stockfish');
+
+      engine.stdout.on('data', (data) => {
+        const lines = data.toString().split('\n');
         for (const line of lines) {
           const trimmed = line.trim();
           if (trimmed) {
             handleEngineLine(trimmed);
           }
         }
-        return originalWrite.call(process.stdout, chunk, encoding, callback);
+      });
+
+      engine.on('error', (err) => {
+        console.error("[Stockfish] Engine error:", err);
+        if (currentReject) currentReject(err);
+      });
+
+      engine.on('exit', (code) => {
+        if (code !== 0) console.log(`[Stockfish] Engine exited with code ${code}`);
+      });
+
+      // UCI Optimizations for Ryzen 5 9600X
+      engine.stdin.write('uci\n');
+      engine.stdin.write('setoption name Threads value 4\n');
+      engine.stdin.write('setoption name Hash value 1024\n');
+      engine.stdin.write('isready\n');
+
+      // Wait for engine to be ready
+      const readyListener = (data) => {
+        if (data.toString().includes('readyok')) {
+          console.log("[Stockfish] Native engine optimized and ready.");
+          engine.stdout.removeListener('data', readyListener);
+          resolve();
+        }
       };
-      
-      console.log("[Stockfish] Engine loaded and stdout redirected.");
-      resolve();
+      engine.stdout.on('data', readyListener);
+
     } catch (error) {
       reject(error);
     }
@@ -49,9 +67,6 @@ async function initStockfish() {
 }
 
 function handleEngineLine(line) {
-  // Save all lines for debugging/info if needed
-  uciOutputs.push(line);
-
   // Parse info lines for score
   if (line.includes('score')) {
     const parts = line.split(' ');
@@ -94,13 +109,12 @@ async function evaluatePosition(fen) {
     bestMove = null;
     score = null;
     scoreType = 'cp';
-    uciOutputs = [];
     currentResolve = resolve;
     currentReject = reject;
 
-    // Send position and analysis depth to Stockfish
-    engine.sendCommand(`position fen ${fen}`);
-    engine.sendCommand("go depth 3");
+    // Send position and perform fast evaluation optimized for Ryzen
+    engine.stdin.write(`position fen ${fen}\n`);
+    engine.stdin.write("go movetime 150\n");
 
     // Timeout safety
     setTimeout(() => {
