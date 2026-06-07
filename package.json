@@ -1,0 +1,10 @@
+{
+  "name": "chess-analyzer",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Full-stack Chess Analyzer with Stockfish 18 and Ollama GM Coach",
+  "scripts": {
+    "install-all": "npm install --prefix backend && npm install --prefix frontend --legacy-peer-deps",
+    "start": "npx concurrently \"npm run dev --prefix backend\" \"npm run dev --prefix frontend\""
+  }
+}
