@@ -1,4 +1,4 @@
-import React, { useState, useEffect, useRef, useMemo, useCallback } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import { Chess } from 'chess.js';
 import { Chessground } from 'chessground';
 import 'chessground/assets/chessground.base.css';
@@ -6,14 +6,14 @@ import 'chessground/assets/chessground.brown.css';
 import 'chessground/assets/chessground.cburnett.css';
 import ReactMarkdown from 'react-markdown';
 import { 
-  RotateCcw, ArrowUpDown, Copy, Check, Sparkles, Activity, Award, ChevronLeft, ChevronRight, SkipBack, SkipForward, Plus, Upload, X, Languages
+  ArrowUpDown, Copy, Check, Sparkles, Activity, Award, ChevronLeft, ChevronRight, SkipBack, SkipForward, Plus, Upload, X, Languages
 } from 'lucide-react';
 
 const markdownComponents = {
-  h1: ({node, ...props}) => <h1 className="text-lg font-black text-violet-400 mt-4 mb-2 border-b border-slate-800 pb-1 uppercase tracking-wider" {...props} />,
-  h2: ({node, ...props}) => <h2 className="text-base font-bold text-violet-300 mt-3 mb-1.5" {...props} />,
-  p: ({node, ...props}) => <p className="text-slate-300 text-xs leading-relaxed mb-2 font-sans" {...props} />,
-  strong: ({node, ...props}) => <strong className="font-semibold text-white" {...props} />,
+  h1: ({...props}) => <h1 className="text-lg font-black text-violet-400 mt-4 mb-2 border-b border-slate-800 pb-1 uppercase tracking-wider" {...props} />,
+  h2: ({...props}) => <h2 className="text-base font-bold text-violet-300 mt-3 mb-1.5" {...props} />,
+  p: ({...props}) => <p className="text-slate-300 text-xs leading-relaxed mb-2 font-sans" {...props} />,
+  strong: ({...props}) => <strong className="font-semibold text-white" {...props} />,
 };
 
 const translations = {
@@ -120,8 +120,6 @@ function App() {
   
   const whiteScoreStr = (evalScore / 100).toFixed(1);
   const blackScoreStr = (-evalScore / 100).toFixed(1);
-  const bottomPlayerScore = boardOrientation === 'white' ? evalScore : -rawEval; // rawEval is not defined here
-  // Wait, I used rawEval in previous turns but it's evalScore here.
   const winPercent = Math.max(5, Math.min(95, 50 + ((boardOrientation === 'white' ? evalScore : -evalScore) / 20))); 
 
   // INITIALIZATION
@@ -248,11 +246,12 @@ function App() {
   }
 
   function navigateHistory(direction) {
-    let newIndex = historyIndex;
-    if (direction === -Infinity) newIndex = -1;
-    else if (direction === Infinity) newIndex = history.length - 1;
-    else newIndex = Math.max(-1, Math.min(historyIndex + direction, history.length - 1));
-    
+    const newIndex = direction === -Infinity
+      ? -1
+      : direction === Infinity
+        ? history.length - 1
+        : Math.max(-1, Math.min(historyIndex + direction, history.length - 1));
+
     const tempGame = new Chess();
     for (let i = 0; i <= newIndex; i++) tempGame.move(history[i]);
     setGame(tempGame);
