@@ -417,12 +417,13 @@ function App() {
           </div>
       )}
 
-      <main className="flex-grow flex overflow-hidden relative">
+      <main className="flex-grow relative h-0">
+        <div className="absolute inset-0 flex overflow-hidden">
         {/* EVAL BAR */}
-        <div className={`w-10 flex flex-col border-r border-slate-800 relative z-10 justify-end ${boardOrientation === 'white' ? 'bg-slate-900' : 'bg-white'}`}>
-            <div 
-                className={`w-full transition-all duration-500 ${boardOrientation === 'white' ? 'bg-white' : 'bg-slate-900'}`} 
-                style={{ height: `${winPercent}%` }} 
+        <div className={`w-10 flex flex-col border-r border-slate-800 z-10 justify-end ${boardOrientation === 'white' ? 'bg-slate-900' : 'bg-white'}`}>
+            <div
+                className={`w-full transition-all duration-500 ${boardOrientation === 'white' ? 'bg-white' : 'bg-slate-900'}`}
+                style={{ height: `${winPercent}%` }}
             />
             <div className="absolute top-0 w-full py-2 flex flex-col items-center text-[9px] font-black pointer-events-none mix-blend-difference">
                 <span className="text-white">
@@ -436,34 +437,37 @@ function App() {
             </div>
         </div>
 
-        <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-8 overflow-hidden text-center">
-          <div className="mb-4 font-bold text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center gap-2">
-            <div className="w-8 h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden">
+        <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-2 sm:p-4 overflow-hidden text-center max-h-full">
+          <div className="mb-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(50vh, 50vw)] text-left flex items-center gap-2 shrink-0">
+            <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
               {boardOrientation === 'white' ? (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?') : (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?')}
             </div>
-            {boardOrientation === 'white' ? playerNames.black : playerNames.white}
-            {boardOrientation === 'white' ? (playerNames.blackElo ? `(${playerNames.blackElo})` : '') : (playerNames.whiteElo ? `(${playerNames.whiteElo})` : '')}
+            <span className="truncate">
+              {boardOrientation === 'white' ? playerNames.black : playerNames.white}
+              {boardOrientation === 'white' ? (playerNames.blackElo ? ` (${playerNames.blackElo})` : '') : (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '')}
+            </span>
           </div>
-          <div className="relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg">
-            <div ref={boardRef} style={{ width: 'min(70vh, 70vw)', height: 'min(70vh, 70vw)' }} />
+          <div className="relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg shrink min-h-0">
+            <div ref={boardRef} style={{ width: 'min(50vh, 50vw)', height: 'min(50vh, 50vw)' }} />
           </div>
-          <div className="mt-4 font-bold text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center gap-2">
-            <div className="w-8 h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden">
+          <div className="mt-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(50vh, 50vw)] text-left flex items-center gap-2 shrink-0">
+            <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
               {boardOrientation === 'white' ? (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?') : (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?')}
             </div>
-            {boardOrientation === 'white' ? playerNames.white : playerNames.black}
-            {boardOrientation === 'white' ? (playerNames.whiteElo ? `(${playerNames.whiteElo})` : '') : (playerNames.blackElo ? `(${playerNames.blackElo})` : '')}
+            <span className="truncate">
+              {boardOrientation === 'white' ? playerNames.white : playerNames.black}
+              {boardOrientation === 'white' ? (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '') : (playerNames.blackElo ? ` (${playerNames.blackElo})` : '')}
+            </span>
           </div>
-
-          <div className="mt-8 flex gap-3 items-center">
-            <button onClick={() => navigateHistory(-Infinity)} className="bg-slate-800 hover:bg-slate-700 p-3 rounded-lg transition"><SkipBack className="w-5 h-5" /></button>
-            <button onClick={() => navigateHistory(-1)} className="bg-slate-800 hover:bg-slate-700 p-3 rounded-lg transition"><ChevronLeft className="w-5 h-5" /></button>
-            <button onClick={handleFlip} className="bg-slate-800 hover:bg-slate-700 p-3 rounded-lg transition"><ArrowUpDown className="w-5 h-5" /></button>
-            <button onClick={() => navigateHistory(1)} className="bg-slate-800 hover:bg-slate-700 p-3 rounded-lg transition"><ChevronRight className="w-5 h-5" /></button>
-            <button onClick={() => navigateHistory(Infinity)} className="bg-slate-800 hover:bg-slate-700 p-3 rounded-lg transition"><SkipForward className="w-5 h-5" /></button>
+          <div className="mt-4 sm:mt-8 flex gap-2 sm:gap-3 items-center shrink-0">
+            <button onClick={() => navigateHistory(-Infinity)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipBack className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+            <button onClick={() => navigateHistory(-1)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+            <button onClick={handleFlip} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ArrowUpDown className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+            <button onClick={() => navigateHistory(1)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+            <button onClick={() => navigateHistory(Infinity)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipForward className="w-4 h-4 sm:w-5 sm:h-5" /></button>
           </div>
-          <div className="mt-4 opacity-50 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
-            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+          <div className="mt-2 sm:mt-4 opacity-50 flex items-center gap-2 text-[9px] sm:text-[10px] font-bold uppercase tracking-widest shrink-0">
+            <div className="w-1 h-1 sm:w-1.5 sm:h-1.5 rounded-full bg-emerald-500"></div>
             {t.serverActive}
           </div>
         </div>
@@ -475,6 +479,7 @@ function App() {
                     <h2 className="text-[10px] font-black uppercase text-slate-500 tracking-[0.2em]">{t.matchProgress}</h2>
                 </div>
                 <div ref={historyContainerRef} className="flex-grow overflow-y-auto pr-2 custom-scrollbar">
+
                     <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
                         {history.map((m, i) => {
                             const result = batchAnalysisResults[m.after];
@@ -533,6 +538,7 @@ function App() {
                     )}
                 </div>
             </div>
+        </div>
         </div>
       </main>
     </div>
