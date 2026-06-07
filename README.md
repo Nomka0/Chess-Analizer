@@ -71,5 +71,5 @@ npm run dev
 2. **Get FEN / Load custom FEN:** Copy the active FEN string, or paste a custom one and click **Cargar** to analyze any position.
 3. **Analyze:** Click **Analizar Posición**.
 4. **Stockfish Evaluation:** The backend routes the FEN to a queued, single-instance Stockfish WASM engine to execute a depth 10 search. It extracts the best move and numerical score.
-5. **Grandmaster AI Commentary:** The backend queries your local Ollama instance with Llama3 (or falls back to Qwen2.5-Coder) using a custom system prompt. It describes the tactical threats, positional elements, and short-term plans in Spanish.
+5. **Grandmaster AI Commentary:** The backend queries your local Ollama instance with Llama3 (or falls back to Qwen2.5-Coder) using a custom system prompt. It describes the tactical threats, positional elements, and short-term plans .
 6. **Markdown UI:** The frontend renders the coach's response with a high-fidelity Tailwind theme.
