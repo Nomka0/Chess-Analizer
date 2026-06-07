@@ -4,10 +4,12 @@ import { Chessground } from 'chessground';
 import 'chessground/assets/chessground.base.css';
 import 'chessground/assets/chessground.brown.css';
 import 'chessground/assets/chessground.cburnett.css';
-import ReactMarkdown from 'react-markdown';
-import { 
-  ArrowUpDown, Copy, Check, Sparkles, Activity, Award, ChevronLeft, ChevronRight, SkipBack, SkipForward, Plus, Upload, X, Languages
-} from 'lucide-react';
+import ImportModal from './components/ImportModal';
+import Header from './components/Header';
+import AnalysisView from './components/AnalysisView';
+import MatchProgress from './components/MatchProgress';
+// ...
+import { ArrowUpDown, ChevronLeft, ChevronRight, SkipBack, SkipForward } from 'lucide-react';
 
 const markdownComponents = {
   h1: ({...props}) => <h1 className="text-lg font-black text-violet-400 mt-4 mb-2 border-b border-slate-800 pb-1 uppercase tracking-wider" {...props} />,
@@ -56,7 +58,7 @@ const translations = {
     pasted: "¡Copiado!",
     loadData: "Cargar Datos",
     pastePgn: "Pega el PGN aquí...",
-    matchProgress: "Progreso de la Partida",
+    matchProgress: "Progreso",
     movesCount: "Total",
     analysis: "Análisis",
     noAnalysis: "Sin análisis para esta posición.",
@@ -97,7 +99,7 @@ function App() {
     whiteElo: '', blackElo: '',
     whiteAvatar: null, blackAvatar: null 
   });
-  const [language, setLanguage] = useState('es'); // Language toggle state
+  const [language, setLanguage] = useState('es'); 
   
   // UI & API STATE
   const [isLoading, setIsLoading] = useState(false);
@@ -105,13 +107,14 @@ function App() {
   const [models, setModels] = useState([]);
   const [selectedModel, setSelectedModel] = useState('');
   const [copied, setCopied] = useState(false);
-  const [showImportModal, setShowImportModal] = useState(null); // 'fen' or 'pgn'
+  const [showImportModal, setShowImportModal] = useState(null); 
   const [tempInput, setFenInput] = useState('');
   
-  const [sidebarWidth, setSidebarWidth] = useState(480);
-  const [moveListHeight, setMoveListHeight] = useState(300);
+  // RESIZING STATES
+  const [sidebarWidth, setSidebarWidth] = useState(650); // Un poco más ancho por defecto ya que ahora se divide en dos columnas
+  const [moveListWidth, setMoveListWidth] = useState(200); // Ahora controla el ANCHO de la lista de jugadas
   const isResizingH = useRef(false);
-  const isResizingV = useRef(false);
+  const isResizingV = useRef(false); // Mantengo el nombre de la ref, pero ahora redimensiona horizontalmente la lista interna
 
   const boardRef = useRef(null);
   const cg = useRef(null);
@@ -141,14 +144,9 @@ function App() {
 
   const fetchAvatar = useCallback(async (username) => {
     try {
-      console.log('Fetching avatar for:', username);
       const response = await fetch(`https://api.chess.com/pub/player/${username}`);
-      if (!response.ok) {
-        console.log('Avatar fetch failed for:', username, response.status);
-        return null;
-      }
+      if (!response.ok) return null;
       const data = await response.json();
-      console.log('Avatar data for:', username, data);
       return data.avatar || null;
     } catch (error) {
       console.error('Error fetching avatar:', error);
@@ -228,13 +226,14 @@ function App() {
   const handleMouseMove = useCallback((e) => {
     if (isResizingH.current) {
         const newWidth = window.innerWidth - e.clientX;
-        if (newWidth > 300 && newWidth < 800) setSidebarWidth(newWidth);
+        if (newWidth > 400 && newWidth < 1000) setSidebarWidth(newWidth);
     }
     if (isResizingV.current) {
         const sidebarRect = sidebarRef.current?.getBoundingClientRect();
         if (sidebarRect) {
-            const newHeight = e.clientY - sidebarRect.top;
-            if (newHeight > 100 && newHeight < window.innerHeight - 200) setMoveListHeight(newHeight);
+            // Ahora calculamos el movimiento horizontal (X) para la lista de movimientos
+            const newWidth = e.clientX - sidebarRect.left;
+            if (newWidth > 120 && newWidth < 400) setMoveListWidth(newWidth);
         }
     }
   }, []);
@@ -250,7 +249,7 @@ function App() {
     isResizingV.current = true;
     document.addEventListener('mousemove', handleMouseMove);
     document.addEventListener('mouseup', stopResizing);
-    document.body.style.cursor = 'row-resize';
+    document.body.style.cursor = 'col-resize'; // Cambiado a col-resize ya que ahora se mueve en horizontal
   }, [handleMouseMove, stopResizing]);
 
   useEffect(() => {
@@ -355,66 +354,29 @@ function App() {
   return (
     <div className="h-screen bg-[#0b0f19] text-white flex flex-col font-sans overflow-hidden">
       
-      {/* HEADER */}
-      <header className="flex justify-between items-center px-6 py-3 border-b border-slate-800 bg-[#161b22] z-20 shadow-xl relative">
-        <div className="flex items-center gap-6">
-          <div className="flex items-center gap-2">
-            <Award className="w-5 h-5 text-violet-400" />
-            <h1 className="text-sm font-black tracking-widest uppercase text-slate-200">{t.title}</h1>
-          </div>
-          
-          <div className="flex gap-2">
-            <button onClick={() => setShowImportModal('fen')} className="bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wider transition flex items-center gap-2">
-                <Plus className="w-3.5 h-3.5" /> FEN
-            </button>
-            <button onClick={() => setShowImportModal('pgn')} className="bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wider transition flex items-center gap-2">
-                <Upload className="w-3.5 h-3.5" /> PGN
-            </button>
-            <button onClick={handleCopyFen} className="bg-slate-800 hover:bg-slate-700 p-1.5 rounded transition" title={t.copyFen}>
-                {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-slate-400" />}
-            </button>
-          </div>
-        </div>
-
-        <div className="flex gap-4 items-center">
-            <button 
-                onClick={() => setLanguage(language === 'en' ? 'es' : 'en')} 
-                className="bg-slate-800 hover:bg-slate-700 p-2 rounded transition flex items-center gap-2 text-[10px] font-bold uppercase"
-            >
-                <Languages className="w-4 h-4" />
-                {language.toUpperCase()}
-            </button>
-            <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs outline-none focus:border-violet-500">
-                <option value="">{t.defaultModel}</option>
-                {models.map(m => <option key={m} value={m}>{m}</option>)}
-            </select>
-            <button onClick={handleAnalyzeAllPgn} disabled={isLoading} className="bg-violet-600 hover:bg-violet-500 px-4 py-1.5 rounded text-xs font-bold transition disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-violet-900/20">
-                {isLoading ? <Activity className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                {isLoading ? t.analyzing.toUpperCase() : t.analyzeFull.toUpperCase()}
-            </button>
-        </div>
-      </header>
+      <Header 
+        t={t}
+        setShowImportModal={setShowImportModal}
+        handleCopyFen={handleCopyFen}
+        copied={copied}
+        language={language}
+        setLanguage={setLanguage}
+        selectedModel={selectedModel}
+        setSelectedModel={setSelectedModel}
+        models={models}
+        handleAnalyzeAllPgn={handleAnalyzeAllPgn}
+        isLoading={isLoading}
+      />
       
-      {/* IMPORT MODAL */}
       {showImportModal && (
-          <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
-              <div className="bg-[#161b22] border border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl p-6">
-                  <div className="flex justify-between items-center mb-4">
-                      <h2 className="text-sm font-black uppercase tracking-widest text-violet-400">Import {showImportModal.toUpperCase()}</h2>
-                      <button onClick={() => setShowImportModal(null)}><X className="w-5 h-5 text-slate-500" /></button>
-                  </div>
-                  <textarea 
-                    autoFocus
-                    className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs font-mono text-slate-300 focus:outline-none focus:border-violet-500 mb-6"
-                    placeholder={showImportModal === 'fen' ? t.fenPlaceholder : t.pgnPlaceholder}
-                    value={tempInput}
-                    onChange={(e) => setFenInput(e.target.value)}
-                  />
-                  <button onClick={handleImport} className="w-full bg-violet-600 hover:bg-violet-500 py-3 rounded-xl font-bold text-sm transition">
-                      {t.loadData}
-                  </button>
-              </div>
-          </div>
+        <ImportModal 
+          showImportModal={showImportModal}
+          setShowImportModal={setShowImportModal}
+          t={t}
+          tempInput={tempInput}
+          setFenInput={setFenInput}
+          handleImport={handleImport}
+        />
       )}
 
       <main className="flex-grow relative h-0">
@@ -438,7 +400,7 @@ function App() {
         </div>
 
         <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-2 sm:p-4 overflow-hidden text-center max-h-full">
-          <div className="mb-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(50vh, 50vw)] text-left flex items-center gap-2 shrink-0">
+          <div className="mb-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center gap-2 shrink-0">
             <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
               {boardOrientation === 'white' ? (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?') : (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?')}
             </div>
@@ -448,9 +410,9 @@ function App() {
             </span>
           </div>
           <div className="relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg shrink min-h-0">
-            <div ref={boardRef} style={{ width: 'min(50vh, 50vw)', height: 'min(50vh, 50vw)' }} />
+            <div ref={boardRef} style={{ width: 'min(70vh, 70vw)', height: 'min(70vh, 70vw)' }} />
           </div>
-          <div className="mt-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(50vh, 50vw)] text-left flex items-center gap-2 shrink-0">
+          <div className="mt-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center gap-2 shrink-0">
             <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
               {boardOrientation === 'white' ? (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?') : (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?')}
             </div>
@@ -471,73 +433,30 @@ function App() {
             {t.serverActive}
           </div>
         </div>
+        
+        {/* BARRA DE REDIMENSIONADO PRINCIPAL (Horizontal) */}
         <div onMouseDown={startResizingH} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10" />
 
-        <div ref={sidebarRef} style={{ width: `${sidebarWidth}px` }} className="bg-[#161b22] border-l border-slate-800 flex flex-col shrink-0">
-            <div style={{ height: `${moveListHeight}px` }} className="border-b border-slate-800 flex flex-col p-5 overflow-hidden shrink-0">
-                <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-[10px] font-black uppercase text-slate-500 tracking-[0.2em]">{t.matchProgress}</h2>
-                </div>
-                <div ref={historyContainerRef} className="flex-grow overflow-y-auto pr-2 custom-scrollbar">
+        {/* CAMBIO CLAVE: Cambiado de flex-col a flex-row para poner los componentes lado a lado */}
+        <div ref={sidebarRef} style={{ width: `${sidebarWidth}px` }} className="bg-[#161b22] border-l border-slate-800 flex flex-row shrink-0 h-full overflow-hidden">
+            <div style={{ width: `${moveListWidth}px` }} className="border-r border-slate-800 flex flex-col shrink-0 h-full">
+                <MatchProgress 
+                    t={t}
+                    history={history}
+                    batchAnalysisResults={batchAnalysisResults}
+                    historyIndex={historyIndex}
+                    navigateHistory={navigateHistory}
+                    historyContainerRef={historyContainerRef}
+                />
+            </div>
+            
+            <div onMouseDown={startResizingV} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10 h-full" />
 
-                    <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
-                        {history.map((m, i) => {
-                            const result = batchAnalysisResults[m.after];
-                            const classification = result?.classification || 'good';
-                            const classColor = {
-                                best: 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400',
-                                excellent: 'border-emerald-400/20 bg-emerald-400/5 text-emerald-300',
-                                good: 'border-slate-700 bg-slate-800/50 text-slate-400',
-                                inaccuracy: 'border-yellow-500/30 bg-yellow-500/5 text-yellow-300',
-                                mistake: 'border-orange-500/30 bg-orange-500/5 text-orange-400',
-                                blunder: 'border-rose-500/40 bg-rose-500/5 text-rose-400'
-                            }[classification];
-                            return (
-                                <div key={i} onClick={() => navigateHistory(i - historyIndex)} className={`px-3 py-2 border rounded cursor-pointer transition-all ${i === historyIndex ? 'ring-2 ring-violet-500 border-violet-500 bg-violet-500/5 scale-[1.02] z-10 shadow-lg shadow-violet-900/20' : 'hover:border-slate-500'} ${classColor}`}>
-                                    <span className="opacity-30 mr-2 text-[9px]">{Math.floor(i/2)+1}{i % 2 === 0 ? '.' : '...'}</span>
-                                    <span className="font-black text-xs uppercase">{m.san}</span>
-                                    {result && <span className="float-right text-[8px] opacity-50">{t[classification]}</span>}
-                                </div>
-                            );
-                        })}
-                    </div>
-                </div>
-            </div>
-            <div onMouseDown={startResizingV} className="h-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-row-resize z-10" />
-            <div className="flex-grow flex flex-col overflow-hidden bg-[#0d1117]/30">
-                <div className="flex-grow overflow-y-auto p-6 space-y-6 custom-scrollbar">
-                    {currentAnalysis ? (
-                        <div className="animate-fade-in pb-12">
-                             <div className="flex items-center justify-between mb-8 border-b border-slate-800/50 pb-5">
-                                <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-tighter shadow-sm ${
-                                    {
-                                        best: 'bg-emerald-500 text-white',
-                                        excellent: 'bg-emerald-400 text-black',
-                                        good: 'bg-slate-700 text-white',
-                                        inaccuracy: 'bg-yellow-500 text-black',
-                                        mistake: 'bg-orange-500 text-white',
-                                        blunder: 'bg-rose-600 text-white'
-                                    }[currentAnalysis.classification || 'good']
-                                }`}>
-                                    {t[currentAnalysis.classification || 'good']}
-                                </span>
-                                <div className="flex flex-col items-end">
-                                    <span className="text-[10px] text-slate-500 uppercase font-black tracking-widest">{t.suggested}</span>
-                                    <span className="text-lg font-black font-mono text-violet-400 leading-none mt-1">{currentAnalysis.bestmove}</span>
-                                </div>
-                            </div>
-                            <div className="prose-slate prose-invert max-w-none">
-                                <ReactMarkdown components={markdownComponents}>{currentAnalysis.analysis}</ReactMarkdown>
-                            </div>
-                        </div>
-                    ) : (
-                        <div className="h-full flex flex-col items-center justify-center text-center opacity-20 px-10 grayscale">
-                            <Sparkles className="w-16 h-12 mb-6 text-indigo-400" />
-                            <p className="text-[11px] font-black uppercase tracking-[0.2em] leading-relaxed">{t.intelligenceReady} <br/> {t.loadMatch}</p>
-                        </div>
-                    )}
-                </div>
-            </div>
+            <AnalysisView 
+              currentAnalysis={currentAnalysis}
+              t={t}
+              markdownComponents={markdownComponents}
+            />
         </div>
         </div>
       </main>
