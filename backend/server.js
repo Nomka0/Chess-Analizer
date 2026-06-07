@@ -2,6 +2,7 @@ import express from 'express';
 import cors from 'cors';
 import stockfish from 'stockfish';
 import ollama from 'ollama';
+import { getCachedAnalysis, setCachedAnalysis } from './cache.js';
 
 const app = express();
 app.use(cors());
@@ -145,167 +146,44 @@ class RequestQueue {
 
 const stockfishQueue = new RequestQueue();
 
-// GET route: /api/models
-app.get('/api/models', async (req, res) => {
-  try {
-    const list = await ollama.list();
-    res.json(list.models.map(m => m.name));
-  } catch (error) {
-    res.status(500).json({ error: "Failed to fetch models" });
-  }
-});
+function getSystemPrompt(evaluation, language) {
+    const isEn = language === 'en';
+    if (isEn) {
+        return `You are a "Chess Grandmaster and Coach".
+Your goal is to analyze the chess position provided by the FEN.
+You MUST respond STRICTLY in English and follow this structured Markdown format:
 
-// POST route: /api/analyze
-app.post('/api/analyze', async (req, res) => {
-  const { fen, model } = req.body;
-  if (!fen) {
-    return res.status(400).json({ error: "Missing FEN string in request body" });
-  }
-  
-  try {
-    const result = await performAnalysis(fen, model);
-    res.json(result);
-  } catch (error) {
-    console.error(`[API Error]`, error.message);
-    res.status(500).json({ error: "Error en el análisis de ajedrez", details: error.message });
-  }
-});
+# 📊 Board Evaluation
+---
+- **Current Situation**: [Brief description of the advantage]
+- **Stockfish Evaluation**: ${evaluation.score} ${evaluation.scoreType === 'cp' ? 'centipawns (cp)' : 'moves to checkmate'}. [Brief explanation of what this means].
+- **Material Balance**: [Description of the balance]
 
-import { getCachedAnalysis, setCachedAnalysis } from './cache.js';
+# ⚠️ Immediate Threat
+---
+*What does the opponent want to do in their next move if we do nothing?*
+- **💡 Tactical Alert**: [Detailed explanation]
 
-// Helper for single analysis with cache and stream
-async function performAnalysisStreamed(fen, modelOverride, res) {
-    // 1. Evaluate position with Stockfish
-    const evaluation = await stockfishQueue.add(fen);
-    
-    // Check cache
-    const model = modelOverride || 'gemma4:latest';
-    const cached = getCachedAnalysis(fen, model);
-    if (cached) {
-        res.write(`data: ${JSON.stringify(cached)}\n\n`);
-        res.end();
-        return;
-    }
+# 🧠 Best Move Analysis: ${evaluation.bestmove}
+---
+- **Move Type**: [Defensive / Attack / Development / Prophylactic]
+- **Why is it the best option?**:
+    - **Tactical Solution**: [Detailed explanation]
+    - **Piece Activity**: [Detailed explanation]
 
-    // 2. Query Ollama with streaming
-    const systemPrompt = `Eres un Gran Maestro de Ajedrez y un riguroso lingüista español. Tu única misión es traducir el análisis técnico de Stockfish a un español ajedrecístico impecable, fluido y profesional.
-
-[REGLAS CRÍTICAS DE IDIOMA - PROHIBICIÓN ABSOLUTA]
-1. Está TERMINANTEMENTE PROHIBIDO inventar palabras o usar spanglish.
-2. Si usas palabras como: "gainear", "thermo", "fiani", "menudo", "esfinge", "filetas", "developeda", "bisbotes" o "bolas", el análisis será incorrecto.
-3. Traduce SIEMPRE los bandos y las piezas:
-   - "White" -> Las Blancas
-   - "Black" -> Las Negras
-   - "Pawns" -> Peones
-   - "Knights" -> Caballos
-   - "Bishops" -> Alfiles
-   - "Rooks" -> Torres
-   - "Queens" -> Damas
-   - "King" -> Rey
-   - "Files / Ranks" -> Columnas / Filas
-   - "Queenside / Kingside" -> Flanco de dama / Flanco de rey
-   - "Development" -> Desarrollo
-
-[EJEMPLO DE KHAN / REFERENCIA REAL]
-User FEN: [Cualquier posición]
-Response:
-# 📊 Evaluación del Tablero
-- **Situación Actual**: Ventaja decisiva de las Negras.
-- **Evaluación de Stockfish**: -3.05 centipeones (cp). Esto significa que las Negras tienen una ventaja equivalente a tres peones de diferencia gracias a su mejor estructura.
-- **Balance Material**: Igualdad de piezas menores, pero las Negras cuentan con la pareja de alfiles activa.
-
-# ⚠️ La Amenaza Inmediata (¡Lo más importante!)
-- **💡 Alerta táctica**: Las Negras amenazan con avanzar su peón a e5, expulsando al alfil blanco y tomando el control total de las casillas centrales.
-
-# 🧠 Análisis de la Mejor Jugada: ${evaluation.bestmove}
-- **Tipo de Jugada**: Desarrollo y Ataque.
-- **¿Por qué es la mejor opción?**:
-    - **Solución Táctica**: Controla la ruptura central y abre diagonales para nuestras piezas de largo alcance.
-    - **Actividad de Piezas**: Activa el caballo hacia una casilla fuerte y restringe los saltos del rival.
-
-# 🗺️ Plan de Juego Recomendado
-- **Para el jugador activo**: Consolidar el centro de peones y enrocar en las próximas 3 jugadas.
-- **Línea crítica calculada**: Nf3, d4, d5.
-
-[FIN DEL EJEMPLO]
-
-Analiza el FEN proporcionado. Escribe de forma natural, seria y profesional, como un libro de ajedrez en español. Sigue este formato estrictamente:`;
-
-    try {
-        const stream = await ollama.chat({
-            model: model,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
-            ],
-            options: { temperature: 0.3 },
-            stream: true
-        });
-
-        let fullResponse = "";
-        for await (const chunk of stream) {
-            const content = chunk.message.content;
-            fullResponse += content;
-            // Send chunk to frontend
-            res.write(`data: ${JSON.stringify({ chunk: content })}\n\n`);
-        }
-
-        const result = {
-            fen,
-            bestmove: evaluation.bestmove,
-            score: evaluation.score,
-            scoreType: evaluation.scoreType,
-            analysis: fullResponse
-        };
-
-        // Cache result
-        setCachedAnalysis(fen, model, result);
-        res.end();
-
-    } catch (err) {
-        console.error(`[Ollama] Error:`, err);
-        res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-        res.end();
-    }
-}
-
-// POST route: /api/analyze-stream
-app.post('/api/analyze-stream', (req, res) => {
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    
-    const { fen, model } = req.body;
-    performAnalysisStreamed(fen, model, res);
-});
-
-
-
-// Helper for single analysis
-async function performAnalysis(fen, modelOverride) {
-    // 1. Evaluate position with Stockfish
-    const evaluation = await stockfishQueue.add(fen);
-    
-    // Check cache
-    const model = modelOverride || 'gemma4:latest';
-    const cached = getCachedAnalysis(fen, model);
-    if (cached) return cached;
-
-    // 2. Query Ollama
-
-    const systemPrompt = `Eres un "Gran Maestro y Entrenador de Ajedrez". 
+# 🗺️ Recommended Game Plan
+---
+- **For the active player**: [What to look for in the next 3 moves]
+- **Calculated Critical Line**: [Short sequence of moves]`;
+    } else {
+        return `Eres un "Gran Maestro y Entrenador de Ajedrez". 
 Tu objetivo es analizar la posición en el tablero proporcionada por el FEN. 
-
-REGLA DE ORO OBLIGATORIA: Debes responder ESTRICTAMENTE en español nativo y natural. 
-Está TOTALMENTE PROHIBIDO usar palabras en inglés o spanglish (NO uses "development", "squares", "queenside", "trajes", etc.). Usa los términos correctos en español: "desarrollo", "casillas", "flanco de dama", "amenazas ocultas". Piensa y escribe 100% en español.
-
-Debes seguir el siguiente formato de Markdown estructurado:
-
+Debes responder ESTRICTAMENTE en español y seguir el siguiente formato de Markdown estructurado:
 
 # 📊 Evaluación del Tablero
 ---
-- **Situación Actual**: [Ventaja decisiva Negra / Ventaja ligera Blanca / Igualdad numérica]
-- **Evaluación de Stockfish**: ${evaluation.score} ${evaluation.scoreType === 'cp' ? 'centipeones (cp)' : 'jugadas para jaque mate'}. [Explicación breve de qué significa].
+- **Situación Actual**: [Descripción breve de la ventaja]
+- **Evaluación de Stockfish**: ${evaluation.score} ${evaluation.scoreType === 'cp' ? 'centipeones (cp)' : 'jugadas para mate'}. [Explicación breve de qué significa].
 - **Balance Material**: [Descripción del balance]
 
 # ⚠️ La Amenaza Inmediata
@@ -324,8 +202,20 @@ Debes seguir el siguiente formato de Markdown estructurado:
 ---
 - **Para el jugador activo**: [Qué buscar en las próximas 3 jugadas]
 - **Línea crítica calculada**: [Secuencia corta de jugadas]`;
+    }
+}
 
-    const userPrompt = `Analiza la posición FEN: ${fen}. La jugada recomendada es ${evaluation.bestmove}.`;
+async function performAnalysis(fen, modelOverride, language = 'es') {
+    const evaluation = await stockfishQueue.add(fen);
+    const model = modelOverride || 'phi4-mini:latest';
+    
+    const cached = getCachedAnalysis(fen, model, language);
+    if (cached) return cached;
+
+    const systemPrompt = getSystemPrompt(evaluation, language);
+    const userPrompt = language === 'en' 
+        ? `Analyze FEN: ${fen}. Best move is ${evaluation.bestmove}.` 
+        : `Analiza la posición FEN: ${fen}. La jugada recomendada es ${evaluation.bestmove}.`;
 
     try {
         const response = await ollama.chat({
@@ -342,27 +232,45 @@ Debes seguir el siguiente formato de Markdown estructurado:
             bestmove: evaluation.bestmove,
             score: evaluation.score,
             scoreType: evaluation.scoreType,
-            analysis: response.message.content
+            analysis: response.message.content,
+            language
         };
 
-        // Cache result
-        setCachedAnalysis(fen, model, result);
+        setCachedAnalysis(fen, model, result, language);
         return result;
-
     } catch (err) {
         console.error(`[Ollama] Error:`, err);
         throw err;
     }
 }
 
+// GET route: /api/models
+app.get('/api/models', async (req, res) => {
+  try {
+    const list = await ollama.list();
+    res.json(list.models.map(m => m.name));
+  } catch (error) {
+    res.status(500).json({ error: "Failed to fetch models" });
+  }
+});
+
+// POST route: /api/analyze
+app.post('/api/analyze', async (req, res) => {
+  const { fen, model, language } = req.body;
+  if (!fen) return res.status(400).json({ error: "Missing FEN" });
+  
+  try {
+    const result = await performAnalysis(fen, model, language || 'es');
+    res.json(result);
+  } catch (error) {
+    res.status(500).json({ error: error.message });
+  }
+});
+
 // POST route: /api/evaluate-all
 app.post('/api/evaluate-all', async (req, res) => {
   const { fens } = req.body;
-  if (!fens || !Array.isArray(fens)) {
-    return res.status(400).json({ error: "Missing FENs array" });
-  }
-
-  console.log(`[API] Received batch evaluation request for ${fens.length} positions`);
+  if (!fens || !Array.isArray(fens)) return res.status(400).json({ error: "Missing FENs" });
 
   const results = [];
   for (const fen of fens) {
@@ -370,53 +278,29 @@ app.post('/api/evaluate-all', async (req, res) => {
       const evaluation = await stockfishQueue.add(fen);
       results.push({ fen, ...evaluation });
     } catch (err) {
-      console.error(`[API Batch Error] FEN: ${fen}`, err.message);
       results.push({ fen, error: err.message });
     }
   }
-  console.log(`[API] Batch request completed for ${fens.length} positions`);
   res.json(results);
 });
 
 // POST route: /api/analyze-all
 app.post('/api/analyze-all', async (req, res) => {
-  const { fens, model } = req.body;
-  if (!fens || !Array.isArray(fens)) {
-    return res.status(400).json({ error: "Missing FENs array" });
-  }
-
-  console.log(`[API] Received pipelined analysis request for ${fens.length} positions`);
+  const { fens, model, language } = req.body;
+  if (!fens || !Array.isArray(fens)) return res.status(400).json({ error: "Missing FENs" });
 
   const results = [];
-  
-  // Pipeline function: Process evaluation in parallel but analysis sequentially
-  async function pipeline(fen) {
-      // 1. Evaluate with Stockfish (parallel)
-      const evaluation = await stockfishQueue.add(fen);
-      
-      // 2. Perform AI analysis (sequential)
-      return await performAnalysis(fen, model);
-  }
-
-  // To keep AI analysis sequential while evaluating in parallel,
-  // we can use a p-limit or just a simple sequential queue for the results.
   for (const fen of fens) {
       try {
-          // This will await each evaluation and analysis in order.
-          // To make evaluations parallel, we would need to pre-evaluate all,
-          // but that's memory-intensive.
-          // Given the user's constraints, this is the most stable approach.
-          results.push(await pipeline(fen));
+          const res = await performAnalysis(fen, model, language || 'es');
+          results.push(res);
       } catch (err) {
           results.push({ fen, error: err.message });
       }
   }
-  
-  console.log(`[API] Pipeline analysis completed for ${fens.length} positions`);
   res.json(results);
 });
 
-// Start the server only after Stockfish is loaded
 async function startServer() {
   try {
     await initStockfish();
@@ -424,7 +308,7 @@ async function startServer() {
       console.log(`[Server] Chess Analyzer Backend running on http://localhost:${PORT}`);
     });
   } catch (err) {
-    console.error("Failed to start server due to Stockfish load error:", err);
+    console.error("Failed to start server:", err);
     process.exit(1);
   }
 }

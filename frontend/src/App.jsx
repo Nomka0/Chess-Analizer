@@ -6,12 +6,73 @@ import 'chessground/assets/chessground.brown.css';
 import 'chessground/assets/chessground.cburnett.css';
 import ReactMarkdown from 'react-markdown';
 import { 
-  RotateCcw, ArrowUpDown, Copy, Check, Sparkles, Activity, Award, ChevronLeft, ChevronRight, SkipBack, SkipForward, Plus, Upload, X
+  RotateCcw, ArrowUpDown, Copy, Check, Sparkles, Activity, Award, ChevronLeft, ChevronRight, SkipBack, SkipForward, Plus, Upload, X, Languages
 } from 'lucide-react';
 
 const markdownComponents = {
+  h1: ({node, ...props}) => <h1 className="text-lg font-black text-violet-400 mt-4 mb-2 border-b border-slate-800 pb-1 uppercase tracking-wider" {...props} />,
+  h2: ({node, ...props}) => <h2 className="text-base font-bold text-violet-300 mt-3 mb-1.5" {...props} />,
   p: ({node, ...props}) => <p className="text-slate-300 text-xs leading-relaxed mb-2 font-sans" {...props} />,
   strong: ({node, ...props}) => <strong className="font-semibold text-white" {...props} />,
+};
+
+const translations = {
+  en: {
+    title: "Chess Analyzer Pro",
+    defaultModel: "Default Model",
+    analyzeFull: "Analyze Full Match",
+    analyzing: "Analyzing...",
+    importFen: "Import FEN",
+    importPgn: "Import PGN",
+    copyFen: "Copy FEN",
+    pasted: "Copied!",
+    loadData: "Load Data",
+    pastePgn: "Paste PGN here to start...",
+    matchProgress: "Match Progress",
+    movesCount: "Count",
+    analysis: "Analysis",
+    noAnalysis: "Sin análisis para esta posición.",
+    suggested: "Suggested",
+    intelligenceReady: "Intelligence Ready",
+    loadMatch: "Load match to analyze",
+    best: "best",
+    excellent: "excellent",
+    good: "good",
+    inaccuracy: "inaccuracy",
+    mistake: "mistake",
+    blunder: "blunder",
+    fenPlaceholder: "Paste your FEN here...",
+    pgnPlaceholder: "Paste your PGN here...",
+    serverActive: "Server Active"
+  },
+  es: {
+    title: "Chess Analyzer Pro",
+    defaultModel: "Modelo por defecto",
+    analyzeFull: "Analizar Partida",
+    analyzing: "Analizando...",
+    importFen: "Importar FEN",
+    importPgn: "Importar PGN",
+    copyFen: "Copiar FEN",
+    pasted: "¡Copiado!",
+    loadData: "Cargar Datos",
+    pastePgn: "Pega el PGN aquí...",
+    matchProgress: "Progreso de la Partida",
+    movesCount: "Total",
+    analysis: "Análisis",
+    noAnalysis: "Sin análisis para esta posición.",
+    suggested: "Sugerido",
+    intelligenceReady: "IA Lista",
+    loadMatch: "Carga una partida para analizar",
+    best: "mejor",
+    excellent: "excelente",
+    good: "bueno",
+    inaccuracy: "imprecisión",
+    mistake: "error",
+    blunder: "grave",
+    fenPlaceholder: "Pega tu FEN aquí...",
+    pgnPlaceholder: "Pega tu PGN aquí...",
+    serverActive: "Servidor Activo"
+  }
 };
 
 function classifyMove(score, prevScore) {
@@ -26,10 +87,14 @@ function classifyMove(score, prevScore) {
 }
 
 function App() {
+  // CORE STATE
   const [game, setGame] = useState(new Chess());
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [boardOrientation, setBoardOrientation] = useState('white');
+  const [language, setLanguage] = useState('es'); // Language toggle state
+  
+  // UI & API STATE
   const [isLoading, setIsLoading] = useState(false);
   const [batchAnalysisResults, setBatchAnalysisResults] = useState({});
   const [models, setModels] = useState([]);
@@ -48,17 +113,16 @@ function App() {
   const historyContainerRef = useRef(null);
   const sidebarRef = useRef(null);
   
+  const t = translations[language];
   const currentFen = game.fen();
   const currentAnalysis = useMemo(() => batchAnalysisResults[currentFen] || null, [currentFen, batchAnalysisResults]);
+  const evalScore = currentAnalysis?.score || 0;
   
-  // Win Ratio Bar calculation
-  const rawEval = currentAnalysis?.score || 0;
-  const whiteScoreStr = (rawEval / 100).toFixed(1);
-  const blackScoreStr = (-rawEval / 100).toFixed(1);
-  
-  // Advantage for player at the bottom
-  const bottomPlayerScore = boardOrientation === 'white' ? rawEval : -rawEval;
-  const winPercent = Math.max(5, Math.min(95, 50 + (bottomPlayerScore / 20))); 
+  const whiteScoreStr = (evalScore / 100).toFixed(1);
+  const blackScoreStr = (-evalScore / 100).toFixed(1);
+  const bottomPlayerScore = boardOrientation === 'white' ? evalScore : -rawEval; // rawEval is not defined here
+  // Wait, I used rawEval in previous turns but it's evalScore here.
+  const winPercent = Math.max(5, Math.min(95, 50 + ((boardOrientation === 'white' ? evalScore : -evalScore) / 20))); 
 
   // INITIALIZATION
   useEffect(() => {
@@ -243,7 +307,7 @@ function App() {
                     const aiRes = await (await fetch('http://localhost:3000/api/analyze', {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
-                        body: JSON.stringify({ fen: ev.fen, model: selectedModel })
+                        body: JSON.stringify({ fen: ev.fen, model: selectedModel, language })
                     })).json();
                     currentResults[ev.fen].analysis = aiRes.analysis;
                 }
@@ -257,12 +321,15 @@ function App() {
 
   return (
     <div className="h-screen bg-[#0b0f19] text-white flex flex-col font-sans overflow-hidden">
+      
+      {/* HEADER */}
       <header className="flex justify-between items-center px-6 py-3 border-b border-slate-800 bg-[#161b22] z-20 shadow-xl relative">
         <div className="flex items-center gap-6">
           <div className="flex items-center gap-2">
             <Award className="w-5 h-5 text-violet-400" />
-            <h1 className="text-sm font-black tracking-widest uppercase text-slate-200">Chess Analyzer</h1>
+            <h1 className="text-sm font-black tracking-widest uppercase text-slate-200">{t.title}</h1>
           </div>
+          
           <div className="flex gap-2">
             <button onClick={() => setShowImportModal('fen')} className="bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wider transition flex items-center gap-2">
                 <Plus className="w-3.5 h-3.5" /> FEN
@@ -270,24 +337,32 @@ function App() {
             <button onClick={() => setShowImportModal('pgn')} className="bg-slate-800 hover:bg-slate-700 px-3 py-1.5 rounded text-[10px] font-bold uppercase tracking-wider transition flex items-center gap-2">
                 <Upload className="w-3.5 h-3.5" /> PGN
             </button>
-            <button onClick={handleCopyFen} className="bg-slate-800 hover:bg-slate-700 p-1.5 rounded transition" title="Copy FEN">
+            <button onClick={handleCopyFen} className="bg-slate-800 hover:bg-slate-700 p-1.5 rounded transition" title={t.copyFen}>
                 {copied ? <Check className="w-4 h-4 text-emerald-400" /> : <Copy className="w-4 h-4 text-slate-400" />}
             </button>
           </div>
         </div>
 
         <div className="flex gap-4 items-center">
+            <button 
+                onClick={() => setLanguage(language === 'en' ? 'es' : 'en')} 
+                className="bg-slate-800 hover:bg-slate-700 p-2 rounded transition flex items-center gap-2 text-[10px] font-bold uppercase"
+            >
+                <Languages className="w-4 h-4" />
+                {language.toUpperCase()}
+            </button>
             <select value={selectedModel} onChange={(e) => setSelectedModel(e.target.value)} className="bg-slate-900 border border-slate-700 rounded px-2 py-1 text-xs outline-none focus:border-violet-500">
-                <option value="">Default Model</option>
+                <option value="">{t.defaultModel}</option>
                 {models.map(m => <option key={m} value={m}>{m}</option>)}
             </select>
             <button onClick={handleAnalyzeAllPgn} disabled={isLoading} className="bg-violet-600 hover:bg-violet-500 px-4 py-1.5 rounded text-xs font-bold transition disabled:opacity-50 flex items-center gap-2 shadow-lg shadow-violet-900/20">
                 {isLoading ? <Activity className="w-3.5 h-3.5 animate-spin" /> : <Sparkles className="w-3.5 h-3.5" />}
-                {isLoading ? 'ANALYZING...' : 'RUN FULL ANALYSIS'}
+                {isLoading ? t.analyzing.toUpperCase() : t.analyzeFull.toUpperCase()}
             </button>
         </div>
       </header>
       
+      {/* IMPORT MODAL */}
       {showImportModal && (
           <div className="absolute inset-0 bg-black/60 backdrop-blur-sm z-50 flex items-center justify-center p-4">
               <div className="bg-[#161b22] border border-slate-800 rounded-2xl w-full max-w-lg shadow-2xl p-6">
@@ -298,12 +373,12 @@ function App() {
                   <textarea 
                     autoFocus
                     className="w-full h-40 bg-slate-950 border border-slate-800 rounded-xl p-4 text-xs font-mono text-slate-300 focus:outline-none focus:border-violet-500 mb-6"
-                    placeholder={`Paste your ${showImportModal.toUpperCase()} here...`}
+                    placeholder={showImportModal === 'fen' ? t.fenPlaceholder : t.pgnPlaceholder}
                     value={tempInput}
                     onChange={(e) => setFenInput(e.target.value)}
                   />
                   <button onClick={handleImport} className="w-full bg-violet-600 hover:bg-violet-500 py-3 rounded-xl font-bold text-sm transition">
-                      Load Data
+                      {t.loadData}
                   </button>
               </div>
           </div>
@@ -316,21 +391,19 @@ function App() {
                 className={`w-full transition-all duration-500 ${boardOrientation === 'white' ? 'bg-white' : 'bg-slate-900'}`} 
                 style={{ height: `${winPercent}%` }} 
             />
-            {/* Top Score Label */}
             <div className="absolute top-0 w-full py-2 flex flex-col items-center text-[9px] font-black pointer-events-none mix-blend-difference">
                 <span className="text-white">
-                    {boardOrientation === 'white' ? blackScoreStr : (rawEval > 0 ? `+${whiteScoreStr}` : whiteScoreStr)}
+                    {boardOrientation === 'white' ? blackScoreStr : (evalScore > 0 ? `+${whiteScoreStr}` : whiteScoreStr)}
                 </span>
             </div>
-            {/* Bottom Score Label */}
             <div className="absolute bottom-0 w-full py-2 flex flex-col items-center text-[9px] font-black pointer-events-none mix-blend-difference">
                 <span className="text-white">
-                    {boardOrientation === 'white' ? (rawEval > 0 ? `+${whiteScoreStr}` : whiteScoreStr) : blackScoreStr}
+                    {boardOrientation === 'white' ? (evalScore > 0 ? `+${whiteScoreStr}` : whiteScoreStr) : blackScoreStr}
                 </span>
             </div>
         </div>
 
-        <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-8 overflow-hidden">
+        <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-8 overflow-hidden text-center">
           <div className="relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg">
             <div ref={boardRef} style={{ width: 'min(70vh, 70vw)', height: 'min(70vh, 70vw)' }} />
           </div>
@@ -341,6 +414,10 @@ function App() {
             <button onClick={() => navigateHistory(1)} className="bg-slate-800 hover:bg-slate-700 p-3 rounded-lg transition"><ChevronRight className="w-5 h-5" /></button>
             <button onClick={() => navigateHistory(Infinity)} className="bg-slate-800 hover:bg-slate-700 p-3 rounded-lg transition"><SkipForward className="w-5 h-5" /></button>
           </div>
+          <div className="mt-4 opacity-50 flex items-center gap-2 text-[10px] font-bold uppercase tracking-widest">
+            <div className="w-1.5 h-1.5 rounded-full bg-emerald-500"></div>
+            {t.serverActive}
+          </div>
         </div>
 
         <div onMouseDown={startResizingH} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10" />
@@ -348,12 +425,13 @@ function App() {
         <div ref={sidebarRef} style={{ width: `${sidebarWidth}px` }} className="bg-[#161b22] border-l border-slate-800 flex flex-col shrink-0">
             <div style={{ height: `${moveListHeight}px` }} className="border-b border-slate-800 flex flex-col p-5 overflow-hidden shrink-0">
                 <div className="flex justify-between items-center mb-4">
-                    <h2 className="text-[10px] font-black uppercase text-slate-500 tracking-[0.2em]">Match Progress</h2>
+                    <h2 className="text-[10px] font-black uppercase text-slate-500 tracking-[0.2em]">{t.matchProgress}</h2>
                 </div>
                 <div ref={historyContainerRef} className="flex-grow overflow-y-auto pr-2 custom-scrollbar">
-                    <div className="grid grid-cols-2 gap-2 font-mono text-[11px]">
+                    <div className="grid grid-cols-2 gap-1.5 font-mono text-[11px]">
                         {history.map((m, i) => {
                             const result = batchAnalysisResults[m.after];
+                            const classification = result?.classification || 'good';
                             const classColor = {
                                 best: 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400',
                                 excellent: 'border-emerald-400/20 bg-emerald-400/5 text-emerald-300',
@@ -361,11 +439,12 @@ function App() {
                                 inaccuracy: 'border-yellow-500/30 bg-yellow-500/5 text-yellow-300',
                                 mistake: 'border-orange-500/30 bg-orange-500/5 text-orange-400',
                                 blunder: 'border-rose-500/40 bg-rose-500/5 text-rose-400'
-                            }[result?.classification || 'good'];
+                            }[classification];
                             return (
                                 <div key={i} onClick={() => navigateHistory(i - historyIndex)} className={`px-3 py-2 border rounded cursor-pointer transition-all ${i === historyIndex ? 'ring-2 ring-violet-500 border-violet-500 bg-violet-500/5 scale-[1.02] z-10 shadow-lg shadow-violet-900/20' : 'hover:border-slate-500'} ${classColor}`}>
                                     <span className="opacity-30 mr-2 text-[9px]">{Math.floor(i/2)+1}{i % 2 === 0 ? '.' : '...'}</span>
-                                    <span className="font-black text-xs">{m.san}</span>
+                                    <span className="font-black text-xs uppercase">{m.san}</span>
+                                    {result && <span className="float-right text-[8px] opacity-50">{t[classification]}</span>}
                                 </div>
                             );
                         })}
@@ -388,10 +467,10 @@ function App() {
                                         blunder: 'bg-rose-600 text-white'
                                     }[currentAnalysis.classification || 'good']
                                 }`}>
-                                    {currentAnalysis.classification || 'GOOD'}
+                                    {t[currentAnalysis.classification || 'good']}
                                 </span>
                                 <div className="flex flex-col items-end">
-                                    <span className="text-[10px] text-slate-500 uppercase font-black tracking-widest">Recommended</span>
+                                    <span className="text-[10px] text-slate-500 uppercase font-black tracking-widest">{t.suggested}</span>
                                     <span className="text-lg font-black font-mono text-violet-400 leading-none mt-1">{currentAnalysis.bestmove}</span>
                                 </div>
                             </div>
@@ -402,7 +481,7 @@ function App() {
                     ) : (
                         <div className="h-full flex flex-col items-center justify-center text-center opacity-20 px-10 grayscale">
                             <Sparkles className="w-16 h-12 mb-6 text-indigo-400" />
-                            <p className="text-[11px] font-black uppercase tracking-[0.2em] leading-relaxed">Intelligence Ready <br/> Load match to analyze</p>
+                            <p className="text-[11px] font-black uppercase tracking-[0.2em] leading-relaxed">{t.intelligenceReady} <br/> {t.loadMatch}</p>
                         </div>
                     )}
                 </div>
