@@ -92,6 +92,7 @@ function App() {
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [boardOrientation, setBoardOrientation] = useState('white');
+  const [playerNames, setPlayerNames] = useState({ white: 'White', black: 'Black' });
   const [language, setLanguage] = useState('es'); // Language toggle state
   
   // UI & API STATE
@@ -137,6 +138,10 @@ function App() {
   const handleImportPgn = useCallback((pgnString) => {
     try {
       if (pgnString.includes('1.') || pgnString.includes('[')) {
+        const whiteName = pgnString.match(/\[White "(.*)"\]/)?.[1] || 'White';
+        const blackName = pgnString.match(/\[Black "(.*)"\]/)?.[1] || 'Black';
+        setPlayerNames({ white: whiteName, black: blackName });
+        
         const moveString = pgnString.replace(/\[.*\]/g, '').replace(/\d+\./g, '').replace(/\*/g, '').replace(/0-1|1-0|1\/2-1\/2/g, '').trim();
         const moves = moveString.split(/\s+/);
         const tempGame = new Chess();
@@ -403,10 +408,17 @@ function App() {
         </div>
 
         <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-8 overflow-hidden text-center">
+          <div className="mb-4 font-bold text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left">
+            {boardOrientation === 'white' ? playerNames.black : playerNames.white}
+          </div>
           <div className="relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg">
             <div ref={boardRef} style={{ width: 'min(70vh, 70vw)', height: 'min(70vh, 70vw)' }} />
           </div>
-          <div className="mt-8 flex gap-3">
+          <div className="mt-4 font-bold text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left">
+            {boardOrientation === 'white' ? playerNames.white : playerNames.black}
+          </div>
+
+          <div className="mt-8 flex gap-3 items-center">
             <button onClick={() => navigateHistory(-Infinity)} className="bg-slate-800 hover:bg-slate-700 p-3 rounded-lg transition"><SkipBack className="w-5 h-5" /></button>
             <button onClick={() => navigateHistory(-1)} className="bg-slate-800 hover:bg-slate-700 p-3 rounded-lg transition"><ChevronLeft className="w-5 h-5" /></button>
             <button onClick={handleFlip} className="bg-slate-800 hover:bg-slate-700 p-3 rounded-lg transition"><ArrowUpDown className="w-5 h-5" /></button>
@@ -418,7 +430,6 @@ function App() {
             {t.serverActive}
           </div>
         </div>
-
         <div onMouseDown={startResizingH} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10" />
 
         <div ref={sidebarRef} style={{ width: `${sidebarWidth}px` }} className="bg-[#161b22] border-l border-slate-800 flex flex-col shrink-0">
