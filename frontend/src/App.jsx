@@ -81,7 +81,8 @@ const translations = {
 
 function App() {
   // CORE STATE
-  const [game, setGame] = useState(new Chess());
+  const gameRef = useRef(new Chess());
+  const [game, _setGame] = useState(new Chess()); // For UI triggers
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [boardOrientation, setBoardOrientation] = useState('white');
@@ -95,8 +96,23 @@ function App() {
   // Accuracy state
   const [accuracy, setAccuracy] = useState({ white: 0, black: 0 });
   const [isLoading, setIsLoading] = useState(false);
+  const [analysisProgress, setAnalysisProgress] = useState(0);
   const [batchAnalysisResults, setBatchAnalysisResults] = useState({});
   const [models, setModels] = useState([]);
+
+  // Use a ref to always have access to the latest state in callbacks
+  const historyRef = useRef([]);
+  const resultsRef = useRef({});
+
+  // Synchronize refs with state
+  useEffect(() => { historyRef.current = history; }, [history]);
+  useEffect(() => { resultsRef.current = batchAnalysisResults; }, [batchAnalysisResults]);
+
+  // Helper to update both state and ref for UI
+  const syncGame = useCallback(() => {
+    _setGame(new Chess(gameRef.current.fen()));
+    setHistory(gameRef.current.history({ verbose: true }));
+  }, []);
 
   // CAPS System Helper Functions
   const centipawnsToWinProb = (cp) => 1 / (1 + Math.pow(10, -cp / 400));
@@ -181,6 +197,7 @@ function App() {
 
   const handleImportPgn = useCallback(async (pgnString) => {
     try {
+      const tempGame = new Chess();
       if (pgnString.includes('1.') || pgnString.includes('[')) {
         const whiteName = pgnString.match(/\[White "(.*)"\]/)?.[1] || 'White';
         const blackName = pgnString.match(/\[Black "(.*)"\]/)?.[1] || 'Black';
@@ -196,22 +213,19 @@ function App() {
         
         const moveString = pgnString.replace(/\[.*\]/g, '').replace(/\d+\./g, '').replace(/\*/g, '').replace(/0-1|1-0|1\/2-1\/2/g, '').trim();
         const moves = moveString.split(/\s+/);
-        const tempGame = new Chess();
-        const newHistory = [];
         for (const move of moves) {
           if (!move) continue;
-          const result = tempGame.move(move);
-          if (!result) throw new Error(`Invalid move: ${move}`);
-          newHistory.push(result);
+          if (!tempGame.move(move)) throw new Error(`Invalid move: ${move}`);
         }
-        setHistory(newHistory);
-        setHistoryIndex(-1);
-        setGame(new Chess());
+        gameRef.current = tempGame;
+        syncGame();
+        navigateHistory(-1); // Volver al inicio como se solicitó
       } else {
         let fen = pgnString.trim();
         if (fen.split(' ').length === 1) fen += ' w KQkq - 0 1';
-        setGame(new Chess(fen));
-        setHistory([]);
+        if (!tempGame.load(fen)) throw new Error("Invalid FEN");
+        gameRef.current = tempGame;
+        syncGame();
         setHistoryIndex(-1);
       }
       setBatchAnalysisResults({});
@@ -219,14 +233,14 @@ function App() {
       setShowImportModal(null);
       setFenInput('');
     } catch (e) { alert("Import Error: " + e.message); }
-  }, []);
+  }, [fetchAvatar, syncGame]);
 
   // KEYBOARD/PASTE
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
-      if (e.key === 'ArrowLeft') navigateHistory(-1);
-      if (e.key === 'ArrowRight') navigateHistory(1);
+      if (e.key === 'ArrowLeft') navigateHistory(-1, true);
+      if (e.key === 'ArrowRight') navigateHistory(1, true);
     };
     const handlePaste = (e) => {
       if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
@@ -277,6 +291,32 @@ function App() {
     document.body.style.cursor = 'col-resize';
   }, [handleMouseMove, stopResizing]);
 
+  const handleAnalyzeMove = useCallback(async (index, specificHistory) => {
+    const activeHistory = specificHistory || historyRef.current;
+    if (index < 0 || index >= activeHistory.length) return;
+    const targetFen = activeHistory[index].after;
+    if (resultsRef.current[targetFen] && resultsRef.current[targetFen].analysis) return;
+
+    const prevFen = activeHistory[index].before;
+    const userMove = activeHistory[index].san;
+
+    try {
+        const res = await fetch('http://localhost:3000/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                fen: prevFen, 
+                model: selectedModel, 
+                language,
+                userMove: userMove,
+                classification: 'good'
+            })
+        });
+        const data = await res.json();
+        setBatchAnalysisResults(prev => ({ ...prev, [targetFen]: data }));
+    } catch (e) { console.error(e); }
+  }, [selectedModel, language]);
+
   useEffect(() => {
     if (boardRef.current) {
       if (!cg.current) {
@@ -294,26 +334,51 @@ function App() {
   }, [currentFen, boardOrientation]);
 
   function onDrop(from, to) {
-    const gameCopy = new Chess(game.fen());
-    const move = gameCopy.move({ from, to, promotion: 'q' });
+    // 1. Reconstruct game state at current index to allow branching
+    const tempGame = new Chess();
+    const fullH = gameRef.current.history({verbose: true});
+    const baseFen = fullH.length > 0 ? fullH[0].before : gameRef.current.fen();
+    tempGame.load(baseFen);
+    
+    const historyAtTarget = fullH.slice(0, historyIndex + 1);
+    for (const m of historyAtTarget) tempGame.move(m.san);
+
+    // 2. Attempt the move
+    const move = tempGame.move({ from, to, promotion: 'q' });
     if (move) {
-      setGame(gameCopy);
-      setHistory(gameCopy.history({ verbose: true }));
-      setHistoryIndex(gameCopy.history().length - 1);
+      // 3. Update the master gameRef with this new branch
+      gameRef.current = tempGame;
+      const newFullHistory = tempGame.history({ verbose: true });
+      const newIndex = newFullHistory.length - 1;
+      syncGame();
+      setHistoryIndex(newIndex);
+      handleAnalyzeMove(newIndex, newFullHistory);
     }
   }
 
-  function navigateHistory(direction) {
-    const newIndex = direction === -Infinity
-      ? -1
-      : direction === Infinity
-        ? history.length - 1
-        : Math.max(-1, Math.min(historyIndex + direction, history.length - 1));
+  function navigateHistory(target, isRelative = false) {
+    let newIndex;
+    const totalMoves = gameRef.current.history().length;
+    if (target === -Infinity) newIndex = -1;
+    else if (target === Infinity) newIndex = totalMoves - 1;
+    else if (isRelative) newIndex = Math.max(-1, Math.min(historyIndex + target, totalMoves - 1));
+    else newIndex = target;
 
+    const historyAtTarget = gameRef.current.history({ verbose: true }).slice(0, newIndex + 1);
     const tempGame = new Chess();
-    for (let i = 0; i <= newIndex; i++) tempGame.move(history[i]);
-    setGame(tempGame);
+    
+    // Get start position from gameRef history or current state
+    const fullH = gameRef.current.history({verbose: true});
+    const baseFen = fullH.length > 0 ? fullH[0].before : gameRef.current.fen();
+    tempGame.load(baseFen);
+
+    for (const m of historyAtTarget) tempGame.move(m.san);
+    
+    _setGame(tempGame);
     setHistoryIndex(newIndex);
+    
+    // Auto-analyze move if needed when navigating
+    if (newIndex >= 0) handleAnalyzeMove(newIndex);
   }
 
   function handleFlip() {
@@ -336,16 +401,26 @@ function App() {
 
   async function handleAnalyzeAllPgn() {
     setIsLoading(true);
-    const tempGame = new Chess();
+    setAnalysisProgress(0);
+    
+    const fullH = gameRef.current.history({verbose: true});
+    const baseFen = fullH.length > 0 ? fullH[0].before : gameRef.current.fen();
+    const tempGame = new Chess(baseFen);
+    
     const positions = [{ fen: tempGame.fen() }];
     for (const move of history) {
         tempGame.move(move);
         positions.push({ fen: tempGame.fen(), san: move.san });
     }
 
-    // 1. Obtener evaluaciones rápidas para todos los estados de la partida
+    // 1. Obtener evaluaciones rápidas para todos los estados de la partida (Stockfish)
     const allEvals = {};
     const CHUNK_SIZE = 10;
+    const currentResults = {};
+
+    // Posición inicial
+    currentResults[positions[0].fen] = { score: 0, classification: 'best', analysis: '', bestmove: '' };
+
     for (let i = 0; i < positions.length; i += CHUNK_SIZE) {
         const chunk = positions.slice(i, i + CHUNK_SIZE);
         try {
@@ -354,18 +429,37 @@ function App() {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ fens: chunk.map(p => p.fen) })
             })).json();
+            
             evals.forEach((ev, idx) => {
-                allEvals[chunk[idx].fen] = ev.score;
+                const fen = chunk[idx].fen;
+                allEvals[fen] = {
+                    score: ev.score,
+                    bestmove: ev.bestmove
+                };
+                
+                // Si no es la posición inicial, pre-poblamos con datos de Stockfish
+                if (i + idx > 0) {
+                    const pos = chunk[idx];
+                    const prevPos = positions[i + idx - 1];
+                    const currentGame = new Chess(pos.fen);
+                    const uiScore = currentGame.turn() === 'b' ? -(ev.score || 0) : (ev.score || 0);
+                    
+                    // El "Suggested Move" para el resultado de esta jugada debe ser el de la posición ANTERIOR
+                    const suggestedMoveFromPrev = allEvals[prevPos.fen]?.bestmove || '...';
+
+                    currentResults[pos.fen] = {
+                        score: uiScore,
+                        classification: '...', 
+                        analysis: 'Analizando con IA...',
+                        bestmove: suggestedMoveFromPrev
+                    };
+                }
             });
+            setBatchAnalysisResults({ ...currentResults });
         } catch (e) { console.error(e); }
     }
 
-    const currentResults = {};
     let wPerf = 0, bPerf = 0, wMoves = 0, bMoves = 0;
-
-    // Colocar la posición inicial por defecto en el mapa
-    currentResults[positions[0].fen] = { score: allEvals[positions[0].fen] || 0, classification: 'best', analysis: '', bestmove: '' };
-    setBatchAnalysisResults({ ...currentResults });
 
     // Preparar payloads para el streaming
     const streamPayload = positions.slice(1).map((pos, idx) => {
@@ -373,9 +467,10 @@ function App() {
         const prevGame = new Chess(prevPos.fen);
         const movingPlayer = prevGame.turn();
 
-        const bestScore = movingPlayer === 'b' ? -(allEvals[prevPos.fen] || 0) : (allEvals[prevPos.fen] || 0);
+        const prevEval = allEvals[prevPos.fen];
+        const bestScore = movingPlayer === 'b' ? -(prevEval?.score || 0) : (prevEval?.score || 0);
         const bestProb = centipawnsToWinProb(bestScore);
-        let actualScore = allEvals[pos.fen] || 0;
+        let actualScore = allEvals[pos.fen]?.score || 0;
         if (movingPlayer === 'b') actualScore = -actualScore;
 
         const actualProb = centipawnsToWinProb(actualScore);
@@ -384,15 +479,19 @@ function App() {
         const moveNumber = Math.ceil((idx + 1) / 2);
         const classification = getClassification(impact, cpLoss, moveNumber, pos.san);
 
+        currentResults[pos.fen].classification = classification;
+
         return {
             fen: prevPos.fen,
             userMove: pos.san,
             classification,
-            index: idx + 1, // Store the original position index
+            index: idx + 1,
             impact,
             movingPlayer
         };
     });
+
+    setBatchAnalysisResults({ ...currentResults });
 
     const queryParams = new URLSearchParams({
         fens: JSON.stringify(streamPayload),
@@ -407,6 +506,13 @@ function App() {
         if (event.data === '[DONE]') {
             eventSource.close();
             setIsLoading(false);
+            setAnalysisProgress(100);
+            
+            // Garantizar que la precisión final se muestre correctamente
+            setAccuracy({ 
+                white: wMoves ? (wPerf / wMoves).toFixed(1) : "0.0", 
+                black: bMoves ? (bPerf / bMoves).toFixed(1) : "0.0" 
+            });
             return;
         }
 
@@ -419,21 +525,15 @@ function App() {
                 return;
             }
 
-            const pos = positions[index];
-            const payload = streamPayload[index - 1];
-
-            // UI Score (Perspectiva de las blancas para la barra)
-            const currentGame = new Chess(pos.fen);
-            const uiScore = currentGame.turn() === 'b' ? -(allEvals[pos.fen] || 0) : (allEvals[pos.fen] || 0);
+            const pos = positions[index + 1];
+            const payload = streamPayload[index];
 
             currentResults[pos.fen] = {
-                score: uiScore,
-                classification: payload.classification,
+                ...currentResults[pos.fen],
                 analysis: result.analysis,
                 bestmove: result.bestmove
             };
 
-            // Acumular métricas CAPS
             if (payload.movingPlayer === 'w') {
                 wPerf += (100 - payload.impact);
                 wMoves++;
@@ -443,6 +543,7 @@ function App() {
             }
 
             setBatchAnalysisResults({ ...currentResults });
+            setAnalysisProgress(Math.round((index / streamPayload.length) * 100));
             setAccuracy({ 
                 white: wMoves ? (wPerf / wMoves).toFixed(1) : "0.0", 
                 black: bMoves ? (bPerf / bMoves).toFixed(1) : "0.0" 
@@ -475,6 +576,16 @@ function App() {
         handleAnalyzeAllPgn={handleAnalyzeAllPgn}
         isLoading={isLoading}
       />
+
+      {/* Barra de progreso global */}
+      {isLoading && (
+        <div className="h-1 w-full bg-slate-800 relative z-50">
+          <div 
+            className="h-full bg-violet-500 transition-all duration-300 ease-out"
+            style={{ width: `${analysisProgress}%` }}
+          />
+        </div>
+      )}
       
       {showImportModal && (
         <ImportModal 
@@ -553,9 +664,9 @@ function App() {
             {/* Controles de Navegación (Manteniendo espacios compactos de diseño) */}
             <div className="mt-1.5 flex gap-2 sm:gap-3 items-center shrink-0">
               <button onClick={() => navigateHistory(-Infinity)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipBack className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-              <button onClick={() => navigateHistory(-1)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+              <button onClick={() => navigateHistory(-1, true)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
               <button onClick={handleFlip} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ArrowUpDown className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-              <button onClick={() => navigateHistory(1)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+              <button onClick={() => navigateHistory(1, true)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" /></button>
               <button onClick={() => navigateHistory(Infinity)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipForward className="w-4 h-4 sm:w-5 sm:h-5" /></button>
             </div>
 

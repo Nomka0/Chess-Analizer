@@ -63,10 +63,16 @@ const MatchProgress = ({ t, history, batchAnalysisResults, historyIndex, navigat
               return (
                 <tr key={i} className="border-b border-slate-800/50">
                   <td className="py-1.5 text-slate-500">{i + 1}.</td>
-                  <td className={`py-1.5 px-2 cursor-pointer border rounded ${whiteMove ? getMoveColor(whiteMove) : ''}`} onClick={() => whiteMove && navigateHistory((i * 2) - historyIndex)}>
+                  <td 
+                    className={`py-1.5 px-2 cursor-pointer border rounded ${whiteMove ? getMoveColor(whiteMove) : ''} ${historyIndex === i * 2 ? 'ring-2 ring-violet-500 ring-inset shadow-[inset_0_0_12px_rgba(139,92,246,0.1)]' : ''}`} 
+                    onClick={() => whiteMove && navigateHistory(i * 2)}
+                  >
                     {formatMove(whiteMove)}
                   </td>
-                  <td className={`py-1.5 px-2 cursor-pointer border rounded ${blackMove ? getMoveColor(blackMove) : ''}`} onClick={() => blackMove && navigateHistory((i * 2 + 1) - historyIndex)}>
+                  <td 
+                    className={`py-1.5 px-2 cursor-pointer border rounded ${blackMove ? getMoveColor(blackMove) : ''} ${historyIndex === (i * 2 + 1) ? 'ring-2 ring-violet-500 ring-inset shadow-[inset_0_0_12px_rgba(139,92,246,0.1)]' : ''}`} 
+                    onClick={() => blackMove && navigateHistory(i * 2 + 1)}
+                  >
                     {formatMove(blackMove)}
                   </td>
                 </tr>
