@@ -13,8 +13,13 @@ import { ArrowUpDown, ChevronLeft, ChevronRight, SkipBack, SkipForward } from 'l
 const markdownComponents = {
   h1: ({...props}) => <h1 className="text-lg font-black text-violet-400 mt-4 mb-2 border-b border-slate-800 pb-1 uppercase tracking-wider" {...props} />,
   h2: ({...props}) => <h2 className="text-base font-bold text-violet-300 mt-3 mb-1.5" {...props} />,
-  p: ({...props}) => <p className="text-slate-300 text-xs leading-relaxed mb-2 font-sans" {...props} />,
+  h3: ({...props}) => <h3 className="text-sm font-black text-indigo-400 mt-4 mb-2 uppercase tracking-tight flex items-center gap-2" {...props} />,
+  h4: ({...props}) => <h4 className="text-[11px] font-bold text-slate-400 mt-3 mb-1 uppercase tracking-widest" {...props} />,
+  p: ({...props}) => <p className="text-slate-300 text-xs leading-relaxed mb-3 font-sans" {...props} />,
   strong: ({...props}) => <strong className="font-semibold text-white" {...props} />,
+  ul: ({...props}) => <ul className="list-disc list-inside space-y-1.5 mb-4 text-slate-400 text-xs ml-1" {...props} />,
+  li: ({...props}) => <li className="marker:text-violet-500" {...props} />,
+  blockquote: ({...props}) => <blockquote className="border-l-2 border-violet-500/50 pl-4 py-1 my-4 bg-violet-500/5 italic text-slate-300 rounded-r shadow-sm" {...props} />,
 };
 
 const translations = {
@@ -96,7 +101,19 @@ function App() {
   // CAPS System Helper Functions
   const centipawnsToWinProb = (cp) => 1 / (1 + Math.pow(10, -cp / 400));
   
-  const getClassification = (impact) => {
+  const getClassification = (impact, cpLoss, moveNumber, san) => {
+      // 1. Safeguard for e4/d4 on move 1
+      if (moveNumber === 1 && (san === 'e4' || san === 'd4')) {
+          return 'excellent';
+      }
+
+      // 2. Safeguard for small centipawn loss (less than 30cp)
+      // A difference of less than 0.3 (30 centipawns) should ALWAYS be categorized as "excellent" or "good"
+      if (cpLoss < 30) {
+          return impact < 1.5 ? 'best' : 'excellent';
+      }
+
+      // 3. General categorization based on impact (win probability loss)
       if (impact < 1.5) return 'best';
       if (impact < 4.0) return 'excellent';
       if (impact < 8.0) return 'good';
@@ -358,41 +375,49 @@ function App() {
         const movingPlayer = prevGame.turn();
 
         try {
+            const bestScore = movingPlayer === 'b' ? -(allEvals[prevPos.fen] || 0) : (allEvals[prevPos.fen] || 0);
+            const bestProb = centipawnsToWinProb(bestScore);
+            let actualScore = allEvals[currentPos.fen] || 0;
+
+            // Alineamos la perspectiva del movimiento resultante con el jugador activo
+            if (movingPlayer === 'b') {
+                actualScore = -actualScore;
+            }
+
+            const actualProb = centipawnsToWinProb(actualScore);
+            const impact = Math.max(0, bestProb - actualProb) * 100;
+            const cpLoss = Math.max(0, bestScore - actualScore);
+            const moveNumber = Math.ceil(i / 2);
+            const classification = getClassification(impact, cpLoss, moveNumber, currentPos.san);
+
             // Check cache before fetching
             let aiRes = analysisCache[prevPos.fen];
             if (!aiRes) {
                 aiRes = await (await fetch('http://localhost:3000/api/analyze', {
                     method: 'POST',
                     headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ fen: prevPos.fen, model: selectedModel, language })
+                    body: JSON.stringify({ 
+                        fen: prevPos.fen, 
+                        model: selectedModel, 
+                        language,
+                        userMove: currentPos.san,
+                        classification: classification
+                    })
                 })).json();
                 analysisCache[prevPos.fen] = aiRes;
             }
 
-            const bestScore = aiRes.bestScore; 
-            let actualScore = allEvals[currentPos.fen] || 0;
-
-            // Alineamos la perspectiva del movimiento resultante con el jugador activo
-            // Si el motor devuelve resultados relativos al bando del turno actual:
-            if (movingPlayer === 'b') {
-                actualScore = -actualScore; 
-            }
-
-            const bestProb = centipawnsToWinProb(bestScore);
-            const actualProb = centipawnsToWinProb(actualScore);
-            
-            const impact = Math.max(0, bestProb - actualProb) * 100;
-            const classification = getClassification(impact);
+            // ... resto del loop utiliza aiRes.analysis y aiRes.bestmove
 
             // Estandarizamos el score para la UI (Perspectiva de las blancas para la barra)
             const currentGame = new Chess(currentPos.fen);
             const uiScore = currentGame.turn() === 'b' ? -(allEvals[currentPos.fen] || 0) : (allEvals[currentPos.fen] || 0);
 
-            currentResults[currentPos.fen] = { 
-                score: uiScore, 
-                classification, 
-                analysis: aiRes.analysis, 
-                bestmove: aiRes.bestmove 
+            currentResults[currentPos.fen] = {
+                score: uiScore,
+                classification,
+                analysis: aiRes.analysis,
+                bestmove: aiRes.bestmove
             };
 
             // Acumular métricas para el cálculo CAPS final

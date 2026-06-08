@@ -2,235 +2,249 @@ import express from 'express';
 import cors from 'cors';
 import { spawn } from 'child_process';
 import ollama from 'ollama';
+import { performance } from 'perf_hooks';
 import { getCachedAnalysis, setCachedAnalysis } from './cache.js';
+import { Chess } from 'chess.js';
 
 const app = express();
 app.use(cors());
 app.use(express.json());
 
 const PORT = 3000;
+const ENGINE_COUNT = 6;
 
-// Global Stockfish engine state
-let engine;
-let currentResolve = null;
-let currentReject = null;
-let bestMove = null;
-let score = null;
-let scoreType = 'cp';
+// Helper for FEN identifier
+const getFenId = (fen) => fen.substring(0, 15);
 
-// Initialize native Stockfish engine
-async function initStockfish() {
-  return new Promise((resolve, reject) => {
-    try {
-      console.log("[Stockfish] Spawning native engine...");
-      engine = spawn('stockfish');
-
-      engine.stdout.on('data', (data) => {
-        const lines = data.toString().split('\n');
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (trimmed) {
-            handleEngineLine(trimmed);
-          }
-        }
-      });
-
-      engine.on('error', (err) => {
-        console.error("[Stockfish] Engine error:", err);
-        if (currentReject) currentReject(err);
-      });
-
-      engine.on('exit', (code) => {
-        if (code !== 0) console.log(`[Stockfish] Engine exited with code ${code}`);
-      });
-
-      // UCI Optimizations for Ryzen 5 9600X
-      engine.stdin.write('uci\n');
-      engine.stdin.write('setoption name Threads value 4\n');
-      engine.stdin.write('setoption name Hash value 1024\n');
-      engine.stdin.write('isready\n');
-
-      // Wait for engine to be ready
-      const readyListener = (data) => {
-        if (data.toString().includes('readyok')) {
-          console.log("[Stockfish] Native engine optimized and ready.");
-          engine.stdout.removeListener('data', readyListener);
-          resolve();
-        }
-      };
-      engine.stdout.on('data', readyListener);
-
-    } catch (error) {
-      reject(error);
-    }
-  });
-}
-
-function handleEngineLine(line) {
-  // Parse info lines for score
-  if (line.includes('score')) {
-    const parts = line.split(' ');
-    const scoreIdx = parts.indexOf('score');
-    if (scoreIdx !== -1 && scoreIdx + 2 < parts.length) {
-      const type = parts[scoreIdx + 1]; // 'cp' or 'mate'
-      const val = parts[scoreIdx + 2];
-      if (!isNaN(parseInt(val))) {
-        score = parseInt(val);
-        scoreType = type;
-      }
-    }
+class StockfishWorker {
+  constructor(id) {
+    this.id = id;
+    this.engine = null;
+    this.isBusy = false;
+    this.currentResolve = null;
+    this.currentReject = null;
+    this.bestMove = null;
+    this.score = null;
+    this.scoreType = 'cp';
+    this.initPromise = this.init();
   }
 
-  // Parse bestmove
-  if (line.startsWith('bestmove')) {
-    const parts = line.split(' ');
-    bestMove = parts[1];
-
-    if (currentResolve) {
-      const resolveFn = currentResolve;
-      currentResolve = null;
-      currentReject = null;
-      resolveFn({
-        bestmove: bestMove,
-        score: score,
-        scoreType: scoreType
-      });
-    }
-  }
-}
-
-// Single-instance Stockfish evaluation runner
-async function evaluatePosition(fen) {
-  return new Promise((resolve, reject) => {
-    if (!engine) {
-      return reject(new Error("Stockfish engine is not initialized"));
-    }
-
-    bestMove = null;
-    score = null;
-    scoreType = 'cp';
-    currentResolve = resolve;
-    currentReject = reject;
-
-    // Send position and perform fast evaluation optimized for Ryzen
-    engine.stdin.write(`position fen ${fen}\n`);
-    engine.stdin.write("go movetime 150\n");
-
-    // Timeout safety
-    setTimeout(() => {
-      if (currentResolve === resolve) {
-        currentResolve = null;
-        currentReject = null;
-        reject(new Error("Stockfish evaluation timed out (15s)"));
-      }
-    }, 15000);
-  });
-}
-
-// Simple request queue to prevent concurrent engine access
-class RequestQueue {
-  constructor() {
-    this.queue = [];
-    this.processing = false;
-  }
-
-  async add(fen) {
+  async init() {
     return new Promise((resolve, reject) => {
-      this.queue.push({ fen, resolve, reject });
-      this.processNext();
+      try {
+        this.engine = spawn('stockfish');
+        
+        this.engine.stdout.on('data', (data) => {
+          const lines = data.toString().split('\n');
+          for (const line of lines) {
+            this.handleEngineLine(line.trim());
+          }
+        });
+
+        this.engine.on('error', (err) => {
+          console.error(`[Stockfish ${this.id}] Error:`, err);
+          if (this.currentReject) this.currentReject(err);
+        });
+
+        this.engine.stdin.write('uci\n');
+        this.engine.stdin.write('setoption name Threads value 2\n');
+        this.engine.stdin.write('setoption name Hash value 256\n');
+        this.engine.stdin.write('isready\n');
+
+        const readyListener = (data) => {
+          if (data.toString().includes('readyok')) {
+            console.log(`[Stockfish ${this.id}] Ready.`);
+            this.engine.stdout.removeListener('data', readyListener);
+            resolve();
+          }
+        };
+        this.engine.stdout.on('data', readyListener);
+      } catch (err) {
+        reject(err);
+      }
     });
   }
 
-  async processNext() {
-    if (this.processing || this.queue.length === 0) return;
-    this.processing = true;
+  handleEngineLine(line) {
+    if (!line) return;
+    // console.log(`[SF ${this.id}] ${line}`); // Optional verbose logging
 
-    const { fen, resolve, reject } = this.queue.shift();
+    if (line.includes('score')) {
+      const parts = line.split(' ');
+      const scoreIdx = parts.indexOf('score');
+      if (scoreIdx !== -1 && scoreIdx + 2 < parts.length) {
+        this.scoreType = parts[scoreIdx + 1];
+        const val = parseInt(parts[scoreIdx + 2]);
+        if (!isNaN(val)) this.score = val;
+      }
+    }
+
+    if (line.startsWith('bestmove')) {
+      this.bestMove = line.split(' ')[1];
+      if (this.currentResolve) {
+        const result = { bestmove: this.bestMove, score: this.score, scoreType: this.scoreType };
+        this.currentResolve(result);
+        this.cleanup();
+      }
+    }
+  }
+
+  cleanup() {
+    this.currentResolve = null;
+    this.currentReject = null;
+    this.bestMove = null;
+    this.score = null;
+    this.scoreType = 'cp';
+  }
+
+  async evaluate(fen, moveTimeMs = 200) {
+    this.isBusy = true;
+    const startExec = performance.now();
+    const fenId = getFenId(fen);
+
+    return new Promise((resolve, reject) => {
+      this.currentResolve = resolve;
+      this.currentReject = reject;
+      
+      this.engine.stdin.write(`position fen ${fen}\n`);
+      this.engine.stdin.write(`go movetime ${moveTimeMs}\n`);
+
+      setTimeout(() => {
+        if (this.currentResolve === resolve) {
+          this.isBusy = false;
+          this.cleanup();
+          reject(new Error(`Stockfish ${this.id} evaluation timed out (${moveTimeMs + 1000}ms)`));
+        }
+      }, moveTimeMs + 1000);
+    }).finally(() => {
+      this.isBusy = false;
+      const duration = (performance.now() - startExec).toFixed(1);
+      console.log(`[Perf: Stockfish] [${fenId}] Execution on worker ${this.id}: ${duration}ms`);
+    });
+  }
+}
+
+class StockfishPool {
+  constructor(count) {
+    this.workers = Array.from({ length: count }, (_, i) => new StockfishWorker(i));
+    this.queue = [];
+  }
+
+  async waitForAllReady() {
+    await Promise.all(this.workers.map(w => w.initPromise));
+    console.log(`[Pool] All ${ENGINE_COUNT} workers initialized.`);
+  }
+
+  async addRequest(fen, moveTimeMs) {
+    const startQueue = performance.now();
+    return new Promise((resolve, reject) => {
+      this.queue.push({ fen, moveTimeMs, resolve, reject, startQueue });
+      this.processQueue();
+    });
+  }
+
+  async processQueue() {
+    if (this.queue.length === 0) return;
+
+    const idleWorker = this.workers.find(w => !w.isBusy);
+    if (!idleWorker) return;
+
+    const { fen, moveTimeMs, resolve, reject, startQueue } = this.queue.shift();
+    
+    const waitTime = (performance.now() - startQueue).toFixed(1);
+    console.log(`[Perf: Stockfish] [${getFenId(fen)}] Queue Wait Time: ${waitTime}ms`);
+
     try {
-      const result = await evaluatePosition(fen);
+      const result = await idleWorker.evaluate(fen, moveTimeMs);
       resolve(result);
     } catch (err) {
       reject(err);
     } finally {
-      this.processing = false;
-      this.processNext();
+      this.processQueue();
     }
   }
 }
 
-const stockfishQueue = new RequestQueue();
+const pool = new StockfishPool(ENGINE_COUNT);
 
-function getSystemPrompt(evaluation, language) {
-    const isEn = language === 'en';
-    if (isEn) {
-        return `You are a "Chess Grandmaster and Coach".
-Your goal is to analyze the chess position provided by the FEN.
-You MUST respond STRICTLY in English and follow this structured Markdown format:
+function getSystemPrompt(sanBestMove, language, userMove, classification) {
+    return `Actúa como un Gran Maestro de ajedrez. Tu objetivo es dar un feedback cortísimo, preciso y sin inventar nada.
 
-# 📊 Board Evaluation
+REGLAS DE ORO (ANTI-ALUCINACIONES):
+1. SI LA JUGADA ES SOLO UNA LETRA Y UN NÚMERO (ej. e4, d4, c5), ES UN PEÓN. NUNCA digas que es una torre, alfil o caballo.
+2. NUNCA inventes que hay piezas desarrolladas si es el inicio de la partida.
+3. Si la categoría es "Excelente" o "Buena jugada", solo di por qué es sólida (controla el centro, desarrolla, etc.) y NO critiques la jugada.
+4. NUNCA menciones casillas específicas a menos que estés 100% seguro. Habla de conceptos generales: "control del centro", "desarrollo", "seguridad del rey".
+
+### 🎯 Análisis de tu Movimiento
+> **Tu Jugada:** ${userMove || '[Movimiento]'} | **Categoría:** ${classification || '[Categoría]'}
+
+[1 párrafo corto y directo. Si es buena, felicita. Si es mala, explica el error sin inventar piezas].
+
 ---
-- **Current Situation**: [Brief description of the advantage]
-- **Stockfish Evaluation**: ${evaluation.score} ${evaluation.scoreType === 'cp' ? 'centipawns (cp)' : 'moves to checkmate'}. [Brief explanation of what this means].
-- **Material Balance**: [Description of the balance]
 
-# ⚠️ Immediate Threat
----
-*What does the opponent want to do in their next move if we do nothing?*
-- **💡 Tactical Alert**: [Detailed explanation]
+### 🌟 Sugerencia de Stockfish
+> **Mejor Jugada:** **${sanBestMove}**
 
-# 🧠 Best Move Analysis: ${evaluation.bestmove}
----
-- **Move Type**: [Defensive / Attack / Development / Prophylactic]
-- **Why is it the best option?**:
-    - **Tactical Solution**: [Detailed explanation]
-    - **Piece Activity**: [Detailed explanation]
-
-# 🗺️ Recommended Game Plan
----
-- **For the active player**: [What to look for in the next 3 moves]
-- **Calculated Critical Line**: [Short sequence of moves]`;
-    } else {
-        return `Eres un "Gran Maestro y Entrenador de Ajedrez". 
-Tu objetivo es analizar la posición en el tablero proporcionada por el FEN. 
-Debes responder ESTRICTAMENTE en español y seguir el siguiente formato de Markdown estructurado:
-
-# 📊 Evaluación del Tablero
----
-- **Situación Actual**: [Descripción breve de la ventaja]
-- **Evaluación de Stockfish**: ${evaluation.score} ${evaluation.scoreType === 'cp' ? 'centipeones (cp)' : 'jugadas para mate'}. [Explicación breve de qué significa].
-- **Balance Material**: [Descripción del balance]
-
-# ⚠️ La Amenaza Inmediata
----
-*¿Qué quiere hacer el rival en su siguiente jugada si no hacemos nada?*
-- **💡 Alerta táctica**: [Explicación detallada]
-
-# 🧠 Análisis de la Mejor Jugada: ${evaluation.bestmove}
----
-- **Tipo de Jugada**: [Defensiva / Ataque / Desarrollo / Profiláctica]
-- **¿Por qué es la mejor opción?**:
-    - **Solución Táctica**: [Explicación detallada]
-    - **Actividad de Piezas**: [Explicación detallada]
-
-# 🗺️ Plan de Juego Recomendado
----
-- **Para el jugador activo**: [Qué buscar en las próximas 3 jugadas]
-- **Línea crítica calculada**: [Secuencia corta de jugadas]`;
-    }
+[1 párrafo explicando el concepto general de esta jugada. Ejemplo: "Gana espacio en el centro" o "Desarrolla una pieza menor"].`;
 }
 
-async function performAnalysis(fen, modelOverride, language = 'es') {
-    const evaluation = await stockfishQueue.add(fen);
-    const model = modelOverride || 'phi4-mini:latest';
+async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs = 200, userMove, classification) {
+    const fenId = getFenId(fen);
     
+    // 1. Cache Resolution Profiling
+    const startCache = performance.now();
+    const model = modelOverride || 'phi4-mini:latest';
     const cached = getCachedAnalysis(fen, model, language);
-    if (cached) return cached;
+    if (cached) {
+        const cacheDuration = (performance.now() - startCache).toFixed(1);
+        console.log(`[Perf: Cache] [${fenId}] Resolved from cache in ${cacheDuration}ms`);
+        // Ensure bestScore is present for frontend compatibility
+        if (cached.score !== undefined && cached.bestScore === undefined) {
+            cached.bestScore = cached.score;
+        }
+        return cached;
+    }
 
-    const systemPrompt = getSystemPrompt(evaluation, language);
-    const userPrompt = language === 'en' 
-        ? `Analyze FEN: ${fen}. Best move is ${evaluation.bestmove}.` 
-        : `Analiza la posición FEN: ${fen}. La jugada recomendada es ${evaluation.bestmove}.`;
+    // 2. Stockfish Profiling (Managed inside Pool/Worker)
+    const evaluation = await pool.addRequest(fen, moveTimeMs);
 
+    // UCI to SAN conversion
+    const chess = new Chess(fen);
+    let sanBestMove = evaluation.bestmove;
+    try {
+        // UCI moves are typically like 'e2e4' or 'e7e8q'
+        const from = evaluation.bestmove.substring(0, 2);
+        const to = evaluation.bestmove.substring(2, 4);
+        const promotion = evaluation.bestmove.substring(4) || 'q';
+        
+        const moveObj = chess.move({ from, to, promotion });
+        if (moveObj) {
+            sanBestMove = moveObj.san;
+            // Undo the move so chess object is back to original FEN
+            chess.undo();
+        }
+    } catch (e) {
+        console.error("Error converting UCI to SAN:", e);
+    }
+
+    // Safeguard for categorization (Task 1)
+    let finalClassification = classification;
+    const moveNumber = Math.floor(chess.moveNumber());
+    if (moveNumber === 1 && (userMove === 'e4' || userMove === 'd4')) {
+        if (finalClassification === 'inaccuracy') finalClassification = 'excellent';
+    }
+
+    const systemPrompt = getSystemPrompt(sanBestMove, language, userMove, finalClassification);
+    
+    const scoreStr = evaluation.scoreType === 'cp' 
+        ? `${evaluation.score} centipeones` 
+        : `Mate en ${evaluation.score}`;
+
+    const userPrompt = `FEN: ${fen}\nUser Move: ${userMove || 'N/A'}\nClassification: ${finalClassification || 'N/A'}\nEvaluation: ${scoreStr}\nBest Move: ${sanBestMove}`;
+
+    // 3. Ollama Profiling
+    const startOllama = performance.now();
     try {
         const response = await ollama.chat({
             model: model,
@@ -238,15 +252,26 @@ async function performAnalysis(fen, modelOverride, language = 'es') {
                 { role: 'system', content: systemPrompt },
                 { role: 'user', content: userPrompt }
             ],
-            options: { temperature: 0.3 }
+            options: { 
+                temperature: 0.2,
+                num_predict: 350,
+                num_ctx: 2048
+            }
         });
+
+        const generatedContent = response.message.content;
+        console.log(`[Ollama Debug] Generated text length: ${generatedContent.length} characters.`);
+
+        const ollamaDuration = (performance.now() - startOllama).toFixed(1);
+        console.log(`[Perf: Ollama] [${fenId}] Inference Time: ${ollamaDuration}ms`);
 
         const result = {
             fen,
-            bestmove: evaluation.bestmove,
+            bestmove: sanBestMove,
             score: evaluation.score,
+            bestScore: evaluation.score, // Added for frontend compatibility
             scoreType: evaluation.scoreType,
-            analysis: response.message.content,
+            analysis: generatedContent,
             language
         };
 
@@ -258,7 +283,7 @@ async function performAnalysis(fen, modelOverride, language = 'es') {
     }
 }
 
-// GET route: /api/models
+// API ENDPOINTS
 app.get('/api/models', async (req, res) => {
   try {
     const list = await ollama.list();
@@ -268,56 +293,64 @@ app.get('/api/models', async (req, res) => {
   }
 });
 
-// POST route: /api/analyze
 app.post('/api/analyze', async (req, res) => {
-  const { fen, model, language } = req.body;
+  const startApi = performance.now();
+  const { fen, model, language, moveTime, userMove, classification } = req.body;
   if (!fen) return res.status(400).json({ error: "Missing FEN" });
+  const fenId = getFenId(fen);
   
   try {
-    const result = await performAnalysis(fen, model, language || 'es');
+    const result = await performAnalysis(fen, model, language || 'es', moveTime, userMove, classification);
+    const apiDuration = (performance.now() - startApi).toFixed(1);
+    console.log(`[Perf: API] [${fenId}] End-to-End Time: ${apiDuration}ms`);
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
   }
 });
 
-// POST route: /api/evaluate-all
 app.post('/api/evaluate-all', async (req, res) => {
-  const { fens } = req.body;
+  const startApi = performance.now();
+  const { fens, moveTime } = req.body;
   if (!fens || !Array.isArray(fens)) return res.status(400).json({ error: "Missing FENs" });
 
-  const results = [];
-  for (const fen of fens) {
+  const results = await Promise.all(fens.map(async (fen) => {
     try {
-      const evaluation = await stockfishQueue.add(fen);
-      results.push({ fen, ...evaluation });
+      const evaluation = await pool.addRequest(fen, moveTime);
+      return { fen, ...evaluation };
     } catch (err) {
-      results.push({ fen, error: err.message });
+      return { fen, error: err.message };
     }
-  }
+  }));
+
+  const apiDuration = (performance.now() - startApi).toFixed(1);
+  console.log(`[Perf: API] [Evaluate-All] End-to-End Time: ${apiDuration}ms for ${fens.length} FENs`);
   res.json(results);
 });
 
-// POST route: /api/analyze-all
 app.post('/api/analyze-all', async (req, res) => {
-  const { fens, model, language } = req.body;
+  const startApi = performance.now();
+  const { fens, model, language, moveTime } = req.body;
   if (!fens || !Array.isArray(fens)) return res.status(400).json({ error: "Missing FENs" });
 
   const results = [];
   for (const fen of fens) {
       try {
-          const res = await performAnalysis(fen, model, language || 'es');
+          const res = await performAnalysis(fen, model, language || 'es', moveTime);
           results.push(res);
       } catch (err) {
           results.push({ fen, error: err.message });
       }
   }
+
+  const apiDuration = (performance.now() - startApi).toFixed(1);
+  console.log(`[Perf: API] [Analyze-All] End-to-End Time: ${apiDuration}ms for ${fens.length} FENs`);
   res.json(results);
 });
 
 async function startServer() {
   try {
-    await initStockfish();
+    await pool.waitForAllReady();
     app.listen(PORT, () => {
       console.log(`[Server] Chess Analyzer Backend running on http://localhost:${PORT}`);
     });
