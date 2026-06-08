@@ -1,3 +1,7 @@
+# Disclaimer
+
+For now this is a personal project, intended to work on my personal hardware. Please, use with caution, or fork it
+
 # Chess GM Analyzer ♟️🤖
 
 A local, full-stack chess analysis application that combines the raw depth evaluation of **Stockfish 18 (WASM)** with tactical and strategic commentary from a **local Llama3 / Qwen2.5-Coder model (via Ollama)** acting as a Grandmaster Chess Coach.
