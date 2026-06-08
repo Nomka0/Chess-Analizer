@@ -11,7 +11,7 @@ app.use(cors());
 app.use(express.json());
 
 const PORT = 3000;
-const ENGINE_COUNT = 6;
+const ENGINE_COUNT = 5;
 
 // Helper for FEN identifier
 const getFenId = (fen) => fen.substring(0, 15);
@@ -26,6 +26,7 @@ class StockfishWorker {
     this.bestMove = null;
     this.score = null;
     this.scoreType = 'cp';
+    this.pv = '';
     this.initPromise = this.init();
   }
 
@@ -69,20 +70,31 @@ class StockfishWorker {
     if (!line) return;
     // console.log(`[SF ${this.id}] ${line}`); // Optional verbose logging
 
-    if (line.includes('score')) {
+    if (line.startsWith('info') && line.includes('score')) {
       const parts = line.split(' ');
+      
       const scoreIdx = parts.indexOf('score');
       if (scoreIdx !== -1 && scoreIdx + 2 < parts.length) {
         this.scoreType = parts[scoreIdx + 1];
         const val = parseInt(parts[scoreIdx + 2]);
         if (!isNaN(val)) this.score = val;
       }
+
+      const pvIdx = parts.indexOf('pv');
+      if (pvIdx !== -1) {
+        this.pv = parts.slice(pvIdx + 1).join(' ');
+      }
     }
 
     if (line.startsWith('bestmove')) {
       this.bestMove = line.split(' ')[1];
       if (this.currentResolve) {
-        const result = { bestmove: this.bestMove, score: this.score, scoreType: this.scoreType };
+        const result = { 
+          bestmove: this.bestMove, 
+          score: this.score, 
+          scoreType: this.scoreType,
+          pv: this.pv
+        };
         this.currentResolve(result);
         this.cleanup();
       }
@@ -95,6 +107,7 @@ class StockfishWorker {
     this.bestMove = null;
     this.score = null;
     this.scoreType = 'cp';
+    this.pv = '';
   }
 
   async evaluate(fen, moveTimeMs = 200) {
@@ -107,15 +120,15 @@ class StockfishWorker {
       this.currentReject = reject;
       
       this.engine.stdin.write(`position fen ${fen}\n`);
-      this.engine.stdin.write(`go movetime ${moveTimeMs}\n`);
+      this.engine.stdin.write(`go depth 16\n`);
 
       setTimeout(() => {
         if (this.currentResolve === resolve) {
           this.isBusy = false;
           this.cleanup();
-          reject(new Error(`Stockfish ${this.id} evaluation timed out (${moveTimeMs + 1000}ms)`));
+          reject(new Error(`Stockfish ${this.id} evaluation timed out`));
         }
-      }, moveTimeMs + 1000);
+      }, 3000);
     }).finally(() => {
       this.isBusy = false;
       const duration = (performance.now() - startExec).toFixed(1);
@@ -168,25 +181,23 @@ class StockfishPool {
 const pool = new StockfishPool(ENGINE_COUNT);
 
 function getSystemPrompt(sanBestMove, language, userMove, classification) {
-    return `Actúa como un Gran Maestro de ajedrez. Tu objetivo es dar un feedback cortísimo, preciso y sin inventar nada.
+    return `Actúa como un locutor de ajedrez. Tu único trabajo es traducir los datos matemáticos de Stockfish a un lenguaje natural y empático.
 
 REGLAS DE ORO (ANTI-ALUCINACIONES):
-1. SI LA JUGADA ES SOLO UNA LETRA Y UN NÚMERO (ej. e4, d4, c5), ES UN PEÓN. NUNCA digas que es una torre, alfil o caballo.
-2. NUNCA inventes que hay piezas desarrolladas si es el inicio de la partida.
-3. Si la categoría es "Excelente" o "Buena jugada", solo di por qué es sólida (controla el centro, desarrolla, etc.) y NO critiques la jugada.
-4. NUNCA menciones casillas específicas a menos que estés 100% seguro. Habla de conceptos generales: "control del centro", "desarrollo", "seguridad del rey".
+1. ERES CIEGO AL TABLERO: No intentes adivinar ataques, jaques mates, ni clavadas que no estén explicadas explícitamente en la 'Línea esperada (PV)'.
+2. PROHIBIDO USAR CLICHÉS: Si la partida ya está avanzada (FEN complejo), NUNCA hables de "desarrollo de piezas" o "control del centro en la apertura".
+3. NO INVENTES JUGADAS: Solo puedes mencionar las jugadas exactas que se te proporcionen en los datos. Si no sabes por qué una jugada es mala, simplemente di: "El motor detecta que esta jugada pierde una ventaja crítica" y pasa a la alternativa.
 
 ### 🎯 Análisis de tu Movimiento
 > **Tu Jugada:** ${userMove || '[Movimiento]'} | **Categoría:** ${classification || '[Categoría]'}
-
-[1 párrafo corto y directo. Si es buena, felicita. Si es mala, explica el error sin inventar piezas].
+[1 párrafo. Si es buena, felicita la precisión. Si es mala o imprecisión, di que pierde la ventaja según el análisis de la computadora, sin inventar el por qué táctico].
 
 ---
-
-### 🌟 Sugerencia de Stockfish
+### 🌟 La Alternativa de Stockfish
 > **Mejor Jugada:** **${sanBestMove}**
 
-[1 párrafo explicando el concepto general de esta jugada. Ejemplo: "Gana espacio en el centro" o "Desarrolla una pieza menor"].`;
+#### 🔍 La Estrategia
+[Explica brevemente qué pasaría según la 'Línea esperada (PV)'. Ejemplo: "La computadora sugiere esta jugada porque la secuencia esperada lleva a un intercambio favorable de material..."].`;
 }
 
 async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs = 200, userMove, classification) {
@@ -241,7 +252,7 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
         ? `${evaluation.score} centipeones` 
         : `Mate en ${evaluation.score}`;
 
-    const userPrompt = `FEN: ${fen}\nUser Move: ${userMove || 'N/A'}\nClassification: ${finalClassification || 'N/A'}\nEvaluation: ${scoreStr}\nBest Move: ${sanBestMove}`;
+    const userPrompt = `FEN: ${fen}\nUser Move: ${userMove || 'N/A'}\nClassification: ${finalClassification || 'N/A'}\nEvaluation: ${scoreStr}\nBest Move: ${sanBestMove}\nLínea esperada (PV): ${evaluation.pv || 'N/A'}`;
 
     // 3. Ollama Profiling
     const startOllama = performance.now();
@@ -272,7 +283,8 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
             bestScore: evaluation.score, // Added for frontend compatibility
             scoreType: evaluation.scoreType,
             analysis: generatedContent,
-            language
+            language,
+            pv: evaluation.pv
         };
 
         setCachedAnalysis(fen, model, result, language);
@@ -346,6 +358,68 @@ app.post('/api/analyze-all', async (req, res) => {
   const apiDuration = (performance.now() - startApi).toFixed(1);
   console.log(`[Perf: API] [Analyze-All] End-to-End Time: ${apiDuration}ms for ${fens.length} FENs`);
   res.json(results);
+});
+
+app.get('/api/analyze-stream', async (req, res) => {
+  const { fens: fensRaw, model, language, moveTime } = req.query;
+  if (!fensRaw) return res.status(400).json({ error: "Missing FENs" });
+
+  let fens;
+  try {
+    fens = JSON.parse(fensRaw);
+    if (!Array.isArray(fens)) throw new Error("FENs must be an array");
+  } catch (e) {
+    return res.status(400).json({ error: "Invalid FENs format" });
+  }
+
+  // SSE Headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  let isDisconnected = false;
+  req.on('close', () => {
+    isDisconnected = true;
+    console.log('[SSE] Client disconnected, stopping analysis loop.');
+  });
+
+  console.log(`[SSE] Starting stream for ${fens.length} FENs`);
+
+  for (let i = 0; i < fens.length; i++) {
+    if (isDisconnected) break;
+
+    const fenData = fens[i];
+    // Supports both array of strings or array of objects {fen, userMove, classification}
+    const fen = typeof fenData === 'string' ? fenData : fenData.fen;
+    const userMove = typeof fenData === 'object' ? fenData.userMove : undefined;
+    const classification = typeof fenData === 'object' ? fenData.classification : undefined;
+
+    try {
+      const result = await performAnalysis(
+        fen, 
+        model, 
+        language || 'es', 
+        parseInt(moveTime) || 200,
+        userMove,
+        classification
+      );
+      
+      if (!isDisconnected) {
+        res.write(`data: ${JSON.stringify({ index: i, result })}\n\n`);
+      }
+    } catch (err) {
+      console.error(`[SSE] Error analyzing FEN at index ${i}:`, err);
+      if (!isDisconnected) {
+        res.write(`data: ${JSON.stringify({ index: i, error: err.message })}\n\n`);
+      }
+    }
+  }
+
+  if (!isDisconnected) {
+    res.write('data: [DONE]\n\n');
+    res.end();
+  }
 });
 
 async function startServer() {

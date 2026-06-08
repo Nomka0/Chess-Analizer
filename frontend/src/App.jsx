@@ -361,84 +361,102 @@ function App() {
     }
 
     const currentResults = {};
-    const analysisCache = {};
     let wPerf = 0, bPerf = 0, wMoves = 0, bMoves = 0;
 
     // Colocar la posición inicial por defecto en el mapa
     currentResults[positions[0].fen] = { score: allEvals[positions[0].fen] || 0, classification: 'best', analysis: '', bestmove: '' };
+    setBatchAnalysisResults({ ...currentResults });
 
-    for (let i = 1; i < positions.length; i++) {
-        const prevPos = positions[i - 1];
-        const currentPos = positions[i];
-        
+    // Preparar payloads para el streaming
+    const streamPayload = positions.slice(1).map((pos, idx) => {
+        const prevPos = positions[idx];
         const prevGame = new Chess(prevPos.fen);
         const movingPlayer = prevGame.turn();
 
+        const bestScore = movingPlayer === 'b' ? -(allEvals[prevPos.fen] || 0) : (allEvals[prevPos.fen] || 0);
+        const bestProb = centipawnsToWinProb(bestScore);
+        let actualScore = allEvals[pos.fen] || 0;
+        if (movingPlayer === 'b') actualScore = -actualScore;
+
+        const actualProb = centipawnsToWinProb(actualScore);
+        const impact = Math.max(0, bestProb - actualProb) * 100;
+        const cpLoss = Math.max(0, bestScore - actualScore);
+        const moveNumber = Math.ceil((idx + 1) / 2);
+        const classification = getClassification(impact, cpLoss, moveNumber, pos.san);
+
+        return {
+            fen: prevPos.fen,
+            userMove: pos.san,
+            classification,
+            index: idx + 1, // Store the original position index
+            impact,
+            movingPlayer
+        };
+    });
+
+    const queryParams = new URLSearchParams({
+        fens: JSON.stringify(streamPayload),
+        model: selectedModel,
+        language,
+        moveTime: 200
+    });
+
+    const eventSource = new EventSource(`http://localhost:3000/api/analyze-stream?${queryParams.toString()}`);
+
+    eventSource.onmessage = (event) => {
+        if (event.data === '[DONE]') {
+            eventSource.close();
+            setIsLoading(false);
+            return;
+        }
+
         try {
-            const bestScore = movingPlayer === 'b' ? -(allEvals[prevPos.fen] || 0) : (allEvals[prevPos.fen] || 0);
-            const bestProb = centipawnsToWinProb(bestScore);
-            let actualScore = allEvals[currentPos.fen] || 0;
-
-            // Alineamos la perspectiva del movimiento resultante con el jugador activo
-            if (movingPlayer === 'b') {
-                actualScore = -actualScore;
+            const data = JSON.parse(event.data);
+            const { index, result, error } = data;
+            
+            if (error) {
+                console.error(`Error at move ${index}:`, error);
+                return;
             }
 
-            const actualProb = centipawnsToWinProb(actualScore);
-            const impact = Math.max(0, bestProb - actualProb) * 100;
-            const cpLoss = Math.max(0, bestScore - actualScore);
-            const moveNumber = Math.ceil(i / 2);
-            const classification = getClassification(impact, cpLoss, moveNumber, currentPos.san);
+            const pos = positions[index];
+            const payload = streamPayload[index - 1];
 
-            // Check cache before fetching
-            let aiRes = analysisCache[prevPos.fen];
-            if (!aiRes) {
-                aiRes = await (await fetch('http://localhost:3000/api/analyze', {
-                    method: 'POST',
-                    headers: { 'Content-Type': 'application/json' },
-                    body: JSON.stringify({ 
-                        fen: prevPos.fen, 
-                        model: selectedModel, 
-                        language,
-                        userMove: currentPos.san,
-                        classification: classification
-                    })
-                })).json();
-                analysisCache[prevPos.fen] = aiRes;
-            }
+            // UI Score (Perspectiva de las blancas para la barra)
+            const currentGame = new Chess(pos.fen);
+            const uiScore = currentGame.turn() === 'b' ? -(allEvals[pos.fen] || 0) : (allEvals[pos.fen] || 0);
 
-            // ... resto del loop utiliza aiRes.analysis y aiRes.bestmove
-
-            // Estandarizamos el score para la UI (Perspectiva de las blancas para la barra)
-            const currentGame = new Chess(currentPos.fen);
-            const uiScore = currentGame.turn() === 'b' ? -(allEvals[currentPos.fen] || 0) : (allEvals[currentPos.fen] || 0);
-
-            currentResults[currentPos.fen] = {
+            currentResults[pos.fen] = {
                 score: uiScore,
-                classification,
-                analysis: aiRes.analysis,
-                bestmove: aiRes.bestmove
+                classification: payload.classification,
+                analysis: result.analysis,
+                bestmove: result.bestmove
             };
 
-            // Acumular métricas para el cálculo CAPS final
-            if (movingPlayer === 'w') {
-                wPerf += (100 - impact);
+            // Acumular métricas CAPS
+            if (payload.movingPlayer === 'w') {
+                wPerf += (100 - payload.impact);
                 wMoves++;
             } else {
-                bPerf += (100 - impact);
+                bPerf += (100 - payload.impact);
                 bMoves++;
             }
 
-            // Actualización progresiva en caliente
             setBatchAnalysisResults({ ...currentResults });
-        } catch (e) { console.error(e); }
-    }
+            setAccuracy({ 
+                white: wMoves ? (wPerf / wMoves).toFixed(1) : "0.0", 
+                black: bMoves ? (bPerf / bMoves).toFixed(1) : "0.0" 
+            });
+        } catch (e) {
+            console.error('Error parsing SSE message:', e);
+        }
+    };
 
-    setAccuracy({ 
-        white: wMoves ? (wPerf / wMoves).toFixed(1) : "0.0", 
-        black: bMoves ? (bPerf / bMoves).toFixed(1) : "0.0" 
-    });
-    setIsLoading(false);
+    eventSource.onerror = (err) => {
+        console.error('SSE Error:', err);
+        eventSource.close();
+        setIsLoading(false);
+    };
   }
 
   return (
