@@ -20,6 +20,14 @@ const markdownComponents = {
   ul: ({...props}) => <ul className="list-disc list-inside space-y-1.5 mb-4 text-slate-400 text-xs ml-1" {...props} />,
   li: ({...props}) => <li className="marker:text-violet-500" {...props} />,
   blockquote: ({...props}) => <blockquote className="border-l-2 border-violet-500/50 pl-4 py-1 my-4 bg-violet-500/5 italic text-slate-300 rounded-r shadow-sm" {...props} />,
+  details: ({...props}) => <details className="mb-2 group" {...props} />,
+  summary: ({...props}) => <summary className="cursor-pointer text-slate-300 text-xs font-semibold hover:text-violet-400 list-none flex items-center gap-2 before:content-['•'] before:text-violet-500" {...props} />,
+  div: ({node, className, ...props}) => {
+    if (className === 'variation') {
+      return <div className="pl-3 py-1.5 text-[11px] font-mono text-slate-400 border-l-2 border-slate-700 ml-1 mt-1 bg-slate-800/30 rounded-r" {...props} />;
+    }
+    return <div {...props} />;
+  }
 };
 
 const translations = {
@@ -177,7 +185,7 @@ function App() {
       .then(res => res.json())
       .then(data => {
         setModels(data);
-        if (data.includes('phi4-mini:latest')) setSelectedModel('phi4-mini:latest');
+        if (data.includes('qwen2.5:14b')) setSelectedModel('qwen2.5:14b');
         else if (data.length > 0) setSelectedModel(data[0]);
       })
       .catch(console.error);
@@ -493,8 +501,24 @@ function App() {
 
     setBatchAnalysisResults({ ...currentResults });
 
+    // Hybrid Selection Algorithm: Prioritize first 2 errors, then fill with high-impact moves
+    const errorClasses = ['inaccuracy', 'mistake', 'blunder'];
+    const earlyErrors = streamPayload
+        .filter(m => errorClasses.includes(m.classification))
+        .slice(0, 2);
+
+    const earlyErrorIndices = new Set(earlyErrors.map(m => m.index));
+    const remainingPool = streamPayload.filter(m => !earlyErrorIndices.has(m.index));
+
+    const criticalMoves = remainingPool
+        .sort((a, b) => b.impact - a.impact)
+        .slice(0, 7 - earlyErrors.length);
+
+    const filteredPayload = [...earlyErrors, ...criticalMoves]
+        .sort((a, b) => a.index - b.index);
+
     const queryParams = new URLSearchParams({
-        fens: JSON.stringify(streamPayload),
+        fens: JSON.stringify(filteredPayload),
         model: selectedModel,
         language,
         moveTime: 200
@@ -518,15 +542,15 @@ function App() {
 
         try {
             const data = JSON.parse(event.data);
-            const { index, result, error } = data;
+            const { index, result, error } = data; // index is the original move index (1-based)
             
             if (error) {
                 console.error(`Error at move ${index}:`, error);
                 return;
             }
 
-            const pos = positions[index + 1];
-            const payload = streamPayload[index];
+            const pos = positions[index];
+            const payload = streamPayload[index - 1];
 
             currentResults[pos.fen] = {
                 ...currentResults[pos.fen],

@@ -1,23 +1,14 @@
-const pieceIcons = {
-  K: '♔',
-  Q: '♕',
-  R: '♖',
-  B: '♗',
-  N: '♘',
-  P: '' // Pawns usually don't have symbols in standard notation
-};
+import { formatChessText } from '../utils';
 
-const formatMove = (move) => {
+const formatMove = (move, hasAnalysis = false) => {
   if (!move) return '';
-  const san = move.san;
-  const piece = san.match(/^[A-Z]/) ? san[0] : 'P';
-  const rest = san.replace(/^[A-Z]/, '');
+  const formattedSan = formatChessText(move.san);
   
   return (
-    <span className="flex items-center gap-1">
-      {pieceIcons[piece] && <span className="text-[14px]">{pieceIcons[piece]}</span>}
-      {rest}
-    </span>
+    <span 
+      className={`flex items-center gap-1 ${hasAnalysis ? 'analyzed-move' : ''}`} 
+      dangerouslySetInnerHTML={{ __html: formattedSan }} 
+    />
   );
 };
 
@@ -26,6 +17,12 @@ const MatchProgress = ({ t, history, batchAnalysisResults, historyIndex, navigat
   for (let i = 0; i < history.length; i += 2) {
     movePairs.push([history[i], history[i + 1]]);
   }
+
+  const hasAnalysis = (move) => {
+    if (!move || !batchAnalysisResults) return false;
+    const result = batchAnalysisResults[move.after];
+    return !!result && result.analysis && result.analysis !== 'Analizando con IA...';
+  };
 
   const getMoveColor = (move) => {
     if (!move || !batchAnalysisResults) return 'hover:border-slate-500';
@@ -67,13 +64,13 @@ const MatchProgress = ({ t, history, batchAnalysisResults, historyIndex, navigat
                     className={`py-1.5 px-2 cursor-pointer border rounded ${whiteMove ? getMoveColor(whiteMove) : ''} ${historyIndex === i * 2 ? 'ring-2 ring-violet-500 ring-inset shadow-[inset_0_0_12px_rgba(139,92,246,0.1)]' : ''}`} 
                     onClick={() => whiteMove && navigateHistory(i * 2)}
                   >
-                    {formatMove(whiteMove)}
+                    {formatMove(whiteMove, hasAnalysis(whiteMove))}
                   </td>
                   <td 
                     className={`py-1.5 px-2 cursor-pointer border rounded ${blackMove ? getMoveColor(blackMove) : ''} ${historyIndex === (i * 2 + 1) ? 'ring-2 ring-violet-500 ring-inset shadow-[inset_0_0_12px_rgba(139,92,246,0.1)]' : ''}`} 
                     onClick={() => blackMove && navigateHistory(i * 2 + 1)}
                   >
-                    {formatMove(blackMove)}
+                    {formatMove(blackMove, hasAnalysis(blackMove))}
                   </td>
                 </tr>
               );

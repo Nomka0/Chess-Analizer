@@ -1,4 +1,5 @@
 import ReactMarkdown from 'react-markdown';
+import rehypeRaw from 'rehype-raw';
 import { Sparkles } from 'lucide-react';
 
 const AnalysisView = ({ currentAnalysis, t, markdownComponents }) => {
@@ -22,11 +23,11 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents }) => {
               </span>
               <div className="flex flex-col items-end">
                   <span className="text-[10px] text-slate-500 uppercase font-black tracking-widest">{t.suggested}</span>
-                  <span className="text-lg font-black font-mono text-violet-400 leading-none mt-1">{currentAnalysis.bestmove}</span>
+                  <span className="text-lg font-black font-mono text-violet-400 leading-none mt-1" dangerouslySetInnerHTML={{ __html: currentAnalysis.bestmove }} />
               </div>
             </div>
             <div className="prose-slate prose-invert max-w-none">
-                <ReactMarkdown components={markdownComponents}>{currentAnalysis.analysis}</ReactMarkdown>
+                <ReactMarkdown components={markdownComponents} rehypePlugins={[rehypeRaw]}>{currentAnalysis.analysis}</ReactMarkdown>
             </div>
           </div>
         ) : (

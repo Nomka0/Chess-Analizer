@@ -1,10 +1,12 @@
 import express from 'express';
 import cors from 'cors';
 import { spawn } from 'child_process';
-import ollama from 'ollama';
+import { Ollama } from 'ollama';
+const ollama = new Ollama({ host: 'http://127.0.0.1:11434' });
 import { performance } from 'perf_hooks';
 import { getCachedAnalysis, setCachedAnalysis } from './cache.js';
 import { Chess } from 'chess.js';
+import { formatChessText } from './utils.js';
 
 const app = express();
 app.use(cors());
@@ -180,24 +182,95 @@ class StockfishPool {
 
 const pool = new StockfishPool(ENGINE_COUNT);
 
-function getSystemPrompt(sanBestMove, language, userMove, classification) {
-    return `Actúa como un locutor de ajedrez. Tu único trabajo es traducir los datos matemáticos de Stockfish a un lenguaje natural y empático.
+function uciToSan(fen, uciMoves) {
+    const chess = new Chess(fen);
+    const sanMoves = [];
+    const moves = uciMoves.split(' ');
+    
+    const unicodeMapping = {
+        'N': '♘', 'B': '♗', 'R': '♖', 'Q': '♕', 'K': '♔'
+    };
 
-REGLAS DE ORO (ANTI-ALUCINACIONES):
-1. ERES CIEGO AL TABLERO: No intentes adivinar ataques, jaques mates, ni clavadas que no estén explicadas explícitamente en la 'Línea esperada (PV)'.
-2. PROHIBIDO USAR CLICHÉS: Si la partida ya está avanzada (FEN complejo), NUNCA hables de "desarrollo de piezas" o "control del centro en la apertura".
-3. NO INVENTES JUGADAS: Solo puedes mencionar las jugadas exactas que se te proporcionen en los datos. Si no sabes por qué una jugada es mala, simplemente di: "El motor detecta que esta jugada pierde una ventaja crítica" y pasa a la alternativa.
+    let turn = chess.turn();
+    let moveNumber = Math.floor(chess.moveNumber());
+    
+    for (const uci of moves) {
+        try {
+            const from = uci.substring(0, 2);
+            const to = uci.substring(2, 4);
+            const promotion = uci.substring(4) || 'q';
+            const move = chess.move({ from, to, promotion });
+            if (move) {
+                let movePrefix = "";
+                if (turn === 'w') {
+                    movePrefix = `${moveNumber}. `;
+                } else {
+                    movePrefix = `${moveNumber}... `;
+                    moveNumber++;
+                }
+                
+                // Use transparent icons for internal processing and Ollama prompt
+                let san = move.san;
+                const firstChar = san[0];
+                if (unicodeMapping[firstChar]) {
+                    san = unicodeMapping[firstChar] + san.substring(1);
+                }
 
-### 🎯 Análisis de tu Movimiento
-> **Tu Jugada:** ${userMove || '[Movimiento]'} | **Categoría:** ${classification || '[Categoría]'}
-[1 párrafo. Si es buena, felicita la precisión. Si es mala o imprecisión, di que pierde la ventaja según el análisis de la computadora, sin inventar el por qué táctico].
+                sanMoves.push(`${movePrefix}${san}`);
+                turn = chess.turn();
+            }
+        } catch (e) {
+            break;
+        }
+    }
+    return sanMoves.join(' ');
+}
+
+function getSystemPrompt(language) {
+    const isEn = language === 'en';
+    
+    return `You are a strict chess engine analytical text generator. 
+
+RULE 1: DO NOT invent moves. Use ONLY the provided Stockfish lines.
+RULE 2: You MUST use the exact HTML structure below. Do NOT remove or modify the <details>, <summary>, or <div class="variation"> tags.
+RULE 3: Use Unicode chess symbols for piece moves: N=♘, B=♗, R=♖, Q=♕, K=♔ (e.g., ♘f3).
+RULE 4: If a section has no significant pros or cons, omit the section title and tags entirely.
+
+Context provided to you:
+- ${isEn ? 'User Move' : 'Jugada del usuario'}: [User Move with move number, e.g., 1... ♘d5]
+- ${isEn ? 'Evaluation' : 'Evaluación'}: [CP Loss]
+- ${isEn ? 'Expected Line' : 'Línea esperada'}: [Expected Line with move numbers and symbols]
+- ${isEn ? 'Best Move' : 'Mejor jugada'}: [Best Move with move numbers and symbols]
+- ${isEn ? 'Best Line' : 'Mejor línea'}: [Best Line with move numbers and symbols]
+
+Respond EXACTLY using this template:
+
+**[${isEn ? 'User Move' : 'Jugada del usuario'}]** es un/una **[${isEn ? 'inaccuracy/mistake/blunder' : 'inprecisión/error/grave'}]** ([Evaluación]cp). [1 ${isEn ? 'brief sentence explaining the tactical consequence' : 'breve oración explicando la consecuencia táctica de este movimiento'}].
+
+# ${isEn ? 'Cons' : 'Contras'}:
+
+<details>
+<summary>[${isEn ? 'Drawback 1' : 'Desventaja 1'}]</summary>
+<div class="variation">[${isEn ? 'Expected Line' : 'Línea esperada'}]</div>
+</details>
+
+# ${isEn ? 'Pros' : 'Pros'}:
+
+<details>
+<summary>[${isEn ? 'Positive aspect' : 'Ventaja 1'}]</summary>
+<div class="variation">[${isEn ? 'Expected Line' : 'Línea esperada'}]</div>
+</details>
 
 ---
-### 🌟 La Alternativa de Stockfish
-> **Mejor Jugada:** **${sanBestMove}**
 
-#### 🔍 La Estrategia
-[Explica brevemente qué pasaría según la 'Línea esperada (PV)'. Ejemplo: "La computadora sugiere esta jugada porque la secuencia esperada lleva a un intercambio favorable de material..."].`;
+# ${isEn ? 'The correct alternative' : 'La alternativa correcta'}: [${isEn ? 'Best Move' : 'Mejor jugada'}]
+
+[1 ${isEn ? 'or 2 short sentences explaining why this move is superior, based on center control, development, or tactics' : 'o 2 oraciones breves explicando por qué esta jugada es superior, basándose en el control del centro, desarrollo o táctica'}].
+
+<details>
+<summary>${isEn ? 'See suggested continuation' : 'Ver continuación sugerida'}</summary>
+<div class="variation">[${isEn ? 'Best Line' : 'Mejor línea'}]</div>
+</details>`;
 }
 
 async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs = 200, userMove, classification) {
@@ -205,54 +278,75 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
     
     // 1. Cache Resolution Profiling
     const startCache = performance.now();
-    const model = modelOverride || 'phi4-mini:latest';
+    const model = modelOverride || 'qwen2.5:14b';
     const cached = getCachedAnalysis(fen, model, language);
     if (cached) {
         const cacheDuration = (performance.now() - startCache).toFixed(1);
         console.log(`[Perf: Cache] [${fenId}] Resolved from cache in ${cacheDuration}ms`);
-        // Ensure bestScore is present for frontend compatibility
         if (cached.score !== undefined && cached.bestScore === undefined) {
             cached.bestScore = cached.score;
         }
         return cached;
     }
 
-    // 2. Stockfish Profiling (Managed inside Pool/Worker)
+    // 2. Stockfish Profiling
+    // Evaluation 1: Position BEFORE user move (to find the true Best Move)
     const evaluation = await pool.addRequest(fen, moveTimeMs);
+    const bestScore = evaluation.score;
+    const sanBestMove = uciToSan(fen, evaluation.bestmove);
+    const sanPv = evaluation.pv ? uciToSan(fen, evaluation.pv) : 'N/A';
 
-    // UCI to SAN conversion
+    // Evaluation 2: Position AFTER user move (to find Actual Score and CP Loss)
     const chess = new Chess(fen);
-    let sanBestMove = evaluation.bestmove;
+    const moveNumber = Math.floor(chess.moveNumber());
+    const prefix = chess.turn() === 'w' ? `${moveNumber}. ` : `${moveNumber}... `;
+    
+    let actualScore = bestScore;
     try {
-        // UCI moves are typically like 'e2e4' or 'e7e8q'
-        const from = evaluation.bestmove.substring(0, 2);
-        const to = evaluation.bestmove.substring(2, 4);
-        const promotion = evaluation.bestmove.substring(4) || 'q';
-        
-        const moveObj = chess.move({ from, to, promotion });
-        if (moveObj) {
-            sanBestMove = moveObj.san;
-            // Undo the move so chess object is back to original FEN
-            chess.undo();
+        const tempChess = new Chess(fen);
+        const m = tempChess.move(userMove);
+        if (m) {
+            const postMoveEvaluation = await pool.addRequest(tempChess.fen(), moveTimeMs);
+            // Flip score for comparison if it's black's turn to keep it relative to white or absolute
+            actualScore = postMoveEvaluation.score;
         }
     } catch (e) {
-        console.error("Error converting UCI to SAN:", e);
+        console.error("Error evaluating post-move position:", e);
     }
 
-    // Safeguard for categorization (Task 1)
-    let finalClassification = classification;
-    const moveNumber = Math.floor(chess.moveNumber());
-    if (moveNumber === 1 && (userMove === 'e4' || userMove === 'd4')) {
-        if (finalClassification === 'inaccuracy') finalClassification = 'excellent';
-    }
+    const cpLoss = Math.abs(bestScore - actualScore);
 
-    const systemPrompt = getSystemPrompt(sanBestMove, language, userMove, finalClassification);
+    // Bug 2: Correct Spanish classification mapping
+    let mappedClassification = classification || "imprecisión";
+    if (language === 'es') {
+        if (cpLoss >= 300) mappedClassification = "error grave";
+        else if (cpLoss >= 100) mappedClassification = "error";
+        else mappedClassification = "imprecisión";
+    } else {
+        if (cpLoss >= 300) mappedClassification = "blunder";
+        else if (cpLoss >= 100) mappedClassification = "mistake";
+        else mappedClassification = "inaccuracy";
+    }
     
-    const scoreStr = evaluation.scoreType === 'cp' 
-        ? `${evaluation.score} centipeones` 
-        : `Mate en ${evaluation.score}`;
+    // Prepare userMove with transparent icons for Ollama prompt
+    let sanUserMove = 'N/A';
+    if (userMove) {
+        const unicodeMapping = { 'N': '♘', 'B': '♗', 'R': '♖', 'Q': '♕', 'K': '♔' };
+        let san = userMove;
+        if (unicodeMapping[san[0]]) {
+            san = unicodeMapping[san[0]] + san.substring(1);
+        }
+        sanUserMove = `${prefix}${san}`;
+    }
 
-    const userPrompt = `FEN: ${fen}\nUser Move: ${userMove || 'N/A'}\nClassification: ${finalClassification || 'N/A'}\nEvaluation: ${scoreStr}\nBest Move: ${sanBestMove}\nLínea esperada (PV): ${evaluation.pv || 'N/A'}`;
+    const systemPrompt = getSystemPrompt(language);
+    
+    const userPrompt = `User Move: ${sanUserMove}
+Classification: ${mappedClassification}
+Evaluation: ${cpLoss}
+Expected Line: ${sanPv}
+Best Move: ${sanBestMove}
+Best Line: ${sanPv}`;
 
     // 3. Ollama Profiling
     const startOllama = performance.now();
@@ -278,13 +372,14 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
 
         const result = {
             fen,
-            bestmove: sanBestMove,
-            score: evaluation.score,
-            bestScore: evaluation.score, // Added for frontend compatibility
+            bestmove: formatChessText(sanBestMove),
+            score: actualScore,
+            bestScore: bestScore,
             scoreType: evaluation.scoreType,
-            analysis: generatedContent,
+            analysis: formatChessText(generatedContent),
             language,
-            pv: evaluation.pv
+            pv: evaluation.pv,
+            cpLoss
         };
 
         setCachedAnalysis(fen, model, result, language);
@@ -297,13 +392,28 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
 
 // API ENDPOINTS
 app.get('/api/models', async (req, res) => {
+  console.log('--- [API] Petición recibida en /api/models ---');
   try {
-    const list = await ollama.list();
-    res.json(list.models.map(m => m.name));
+    console.log('[API] Consultando a Ollama vía HTTP directo...');
+    
+    // Llamamos directamente al puerto de Ollama usando la IP fija IPv4
+    const response = await fetch('http://127.0.0.1:11434/api/tags');
+    
+    if (!response.ok) {
+      throw new Error(`Ollama respondió con estatus: ${response.status}`);
+    }
+
+    const data = await response.json();
+    console.log('[API] Ollama respondió con éxito. Modelos detectados:', data.models.length);
+    
+    // Mapeamos los nombres exactamente igual que antes
+    res.json(data.models.map(m => m.name));
   } catch (error) {
-    res.status(500).json({ error: "Failed to fetch models" });
+    console.error('[API] ❌ Error al buscar modelos:', error.message);
+    res.status(500).json({ error: "Failed to fetch models", details: error.message });
   }
 });
+
 
 app.post('/api/analyze', async (req, res) => {
   const startApi = performance.now();
@@ -406,12 +516,12 @@ app.get('/api/analyze-stream', async (req, res) => {
       );
       
       if (!isDisconnected) {
-        res.write(`data: ${JSON.stringify({ index: i, result })}\n\n`);
+        res.write(`data: ${JSON.stringify({ index: fenData.index ?? i, result })}\n\n`);
       }
     } catch (err) {
       console.error(`[SSE] Error analyzing FEN at index ${i}:`, err);
       if (!isDisconnected) {
-        res.write(`data: ${JSON.stringify({ index: i, error: err.message })}\n\n`);
+        res.write(`data: ${JSON.stringify({ index: fenData.index ?? i, error: err.message })}\n\n`);
       }
     }
   }

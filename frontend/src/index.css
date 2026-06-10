@@ -1,4 +1,5 @@
 @import url('https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700&family=Outfit:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap');
+@import url('https://fonts.googleapis.com/css2?family=Noto+Sans+Symbols&display=swap');
 @import "tailwindcss";
 
 :root {
@@ -46,3 +47,32 @@ code, pre, .mono {
 .animate-fade-in {
   animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
+
+.chess-piece-icon {
+    font-size: 1.35em;
+    line-height: 0;
+    display: inline-block;
+    vertical-align: -0.1em;
+    margin-right: 1px;
+    font-family: "Segoe UI Symbol", "FreeSerif", "Apple Symbols", sans-serif;
+}
+
+/* Styling for the specific analyzed move */
+.analyzed-move {
+    position: relative;
+    color: #2e7d32; /* Distinct, readable green */
+    font-weight: 600;
+    margin-right: 8px; /* Make room for the pseudo-element */
+}
+
+/* Tiny sparkle indicator next to the move */
+.analyzed-move::after {
+    content: '✦';
+    font-size: 0.65em;
+    position: absolute;
+    top: 0;
+    right: -10px;
+    color: #f5a623; /* Gold/Orange spark */
+    pointer-events: none;
+}
+
