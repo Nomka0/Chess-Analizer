@@ -48,15 +48,6 @@ code, pre, .mono {
   animation: fadeIn 0.4s cubic-bezier(0.16, 1, 0.3, 1) forwards;
 }
 
-.chess-piece-icon {
-    font-size: 1.35em;
-    line-height: 0;
-    display: inline-block;
-    vertical-align: -0.1em;
-    margin-right: 1px;
-    font-family: "Segoe UI Symbol", "FreeSerif", "Apple Symbols", sans-serif;
-}
-
 /* Styling for the specific analyzed move */
 .analyzed-move {
     position: relative;
@@ -76,3 +67,32 @@ code, pre, .mono {
     pointer-events: none;
 }
 
+.clickable-move {
+    background-color: #1e293b;
+    color: #38bdf8;
+    padding: 2px 6px;
+    border-radius: 4px;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    transition: all 0.15s ease-in-out;
+    border: 1px solid #334155;
+    font-family: ui-monospace, monospace;
+    font-size: 0.9em;
+    font-weight: 600;
+    margin: 2px 3px;
+    vertical-align: middle;
+}
+
+.clickable-move:hover {
+    background-color: #38bdf8;
+    color: #0f172a;
+    border-color: #38bdf8;
+}
+
+.chess-piece-icon {
+    font-family: 'Noto Sans Symbols', "Segoe UI Symbol", sans-serif;
+    margin-right: 2px;
+    font-size: 1.1em;
+    pointer-events: none;
+}

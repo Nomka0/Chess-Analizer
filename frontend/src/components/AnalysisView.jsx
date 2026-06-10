@@ -1,11 +1,39 @@
+import React, { useRef, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { Sparkles } from 'lucide-react';
+import { formatAIAnalysisText } from '../utils';
 
-const AnalysisView = ({ currentAnalysis, t, markdownComponents }) => {
+const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveClick }) => {
+  const containerRef = useRef(null);
+
+  const handleTextClick = (e) => {
+    const moveNode = e.target.closest('.clickable-move');
+    if (moveNode) {
+        e.preventDefault();
+        const moveSan = moveNode.getAttribute('data-move');
+        
+        if (onVariationMoveClick) {
+            onVariationMoveClick(moveSan);
+        }
+
+        // DEFER FOCUS: Wait for React's reconciliation and DOM updates to finish
+        setTimeout(() => {
+            if (containerRef.current) {
+                containerRef.current.focus();
+            }
+        }, 0);
+    }
+  };
+
   return (
     <div className="flex-grow flex flex-col overflow-hidden bg-[#0d1117]/30 h-full">
-      <div className="flex-grow overflow-y-auto p-5 space-y-6 custom-scrollbar h-full">
+      <div 
+        ref={containerRef}
+        className="flex-grow overflow-y-auto p-5 space-y-6 custom-scrollbar h-full" 
+        onClick={handleTextClick}
+        tabIndex="-1"
+      >
         {currentAnalysis ? (
           <div className="animate-fade-in pb-12">
             <div className="flex items-center justify-between mb-6 border-b border-slate-800/50 pb-4">
@@ -27,7 +55,7 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents }) => {
               </div>
             </div>
             <div className="prose-slate prose-invert max-w-none">
-                <ReactMarkdown components={markdownComponents} rehypePlugins={[rehypeRaw]}>{currentAnalysis.analysis}</ReactMarkdown>
+                <ReactMarkdown components={markdownComponents} rehypePlugins={[rehypeRaw]}>{formatAIAnalysisText(currentAnalysis.analysis)}</ReactMarkdown>
             </div>
           </div>
         ) : (

@@ -1,13 +1,11 @@
-import { formatChessText } from '../utils';
+import { cleanChessSymbolsOnly } from '../utils';
 
 const formatMove = (move, hasAnalysis = false) => {
   if (!move) return '';
-  const formattedSan = formatChessText(move.san);
-  
   return (
     <span 
       className={`flex items-center gap-1 ${hasAnalysis ? 'analyzed-move' : ''}`} 
-      dangerouslySetInnerHTML={{ __html: formattedSan }} 
+      dangerouslySetInnerHTML={{ __html: cleanChessSymbolsOnly(move.san) }} 
     />
   );
 };

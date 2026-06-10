@@ -88,9 +88,9 @@ const translations = {
 };
 
 function App() {
-  // CORE STATE
   const gameRef = useRef(new Chess());
-  const [game, _setGame] = useState(new Chess()); // For UI triggers
+  const [game, _setGame] = useState(new Chess());
+  const [previewGame, setPreviewGame] = useState(null);
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const [boardOrientation, setBoardOrientation] = useState('white');
@@ -101,43 +101,32 @@ function App() {
   });
   const [language, setLanguage] = useState('es'); 
   
-  // Accuracy state
   const [accuracy, setAccuracy] = useState({ white: 0, black: 0 });
   const [isLoading, setIsLoading] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [batchAnalysisResults, setBatchAnalysisResults] = useState({});
   const [models, setModels] = useState([]);
 
-  // Use a ref to always have access to the latest state in callbacks
   const historyRef = useRef([]);
   const resultsRef = useRef({});
 
-  // Synchronize refs with state
   useEffect(() => { historyRef.current = history; }, [history]);
   useEffect(() => { resultsRef.current = batchAnalysisResults; }, [batchAnalysisResults]);
 
-  // Helper to update both state and ref for UI
   const syncGame = useCallback(() => {
     _setGame(new Chess(gameRef.current.fen()));
     setHistory(gameRef.current.history({ verbose: true }));
   }, []);
 
-  // CAPS System Helper Functions
   const centipawnsToWinProb = (cp) => 1 / (1 + Math.pow(10, -cp / 400));
   
   const getClassification = (impact, cpLoss, moveNumber, san) => {
-      // 1. Safeguard for e4/d4 on move 1
       if (moveNumber === 1 && (san === 'e4' || san === 'd4')) {
           return 'excellent';
       }
-
-      // 2. Safeguard for small centipawn loss (less than 30cp)
-      // A difference of less than 0.3 (30 centipawns) should ALWAYS be categorized as "excellent" or "good"
       if (cpLoss < 30) {
           return impact < 1.5 ? 'best' : 'excellent';
       }
-
-      // 3. General categorization based on impact (win probability loss)
       if (impact < 1.5) return 'best';
       if (impact < 4.0) return 'excellent';
       if (impact < 8.0) return 'good';
@@ -151,7 +140,6 @@ function App() {
   const [showImportModal, setShowImportModal] = useState(null); 
   const [tempInput, setFenInput] = useState('');
   
-  // RESIZING STATES
   const [sidebarWidth, setSidebarWidth] = useState(950);
   const [moveListWidth, setMoveListWidth] = useState(200);
   const isResizingH = useRef(false);
@@ -163,7 +151,7 @@ function App() {
   const sidebarRef = useRef(null);
   
   const t = translations[language];
-  const currentFen = game.fen();
+  const currentFen = previewGame ? previewGame.fen() : game.fen();
   
   const currentAnalysis = useMemo(() => {
       return batchAnalysisResults[currentFen] || null;
@@ -174,12 +162,10 @@ function App() {
   const whiteScoreStr = (evalScore / 100).toFixed(1);
   const blackScoreStr = (-evalScore / 100).toFixed(1);
   
-  // Barra de evaluación usando el modelo matemático sigmoide (Igual a Chess.com)
   const winPercent = useMemo(() => {
     return Math.max(5, Math.min(95, centipawnsToWinProb(evalScore) * 100));
   }, [evalScore]);
 
-  // INITIALIZATION
   useEffect(() => {
     fetch('http://localhost:3000/api/models')
       .then(res => res.json())
@@ -227,7 +213,7 @@ function App() {
         }
         gameRef.current = tempGame;
         syncGame();
-        navigateHistory(-1); // Volver al inicio como se solicitó
+        navigateHistory(-1); 
       } else {
         let fen = pgnString.trim();
         if (fen.split(' ').length === 1) fen += ' w KQkq - 0 1';
@@ -243,7 +229,6 @@ function App() {
     } catch (e) { alert("Import Error: " + e.message); }
   }, [fetchAvatar, syncGame]);
 
-  // KEYBOARD/PASTE
   useEffect(() => {
     const handleKeyDown = (e) => {
       if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
@@ -342,7 +327,7 @@ function App() {
   }, [currentFen, boardOrientation]);
 
   function onDrop(from, to) {
-    // 1. Reconstruct game state at current index to allow branching
+    setPreviewGame(null);
     const tempGame = new Chess();
     const fullH = gameRef.current.history({verbose: true});
     const baseFen = fullH.length > 0 ? fullH[0].before : gameRef.current.fen();
@@ -351,10 +336,8 @@ function App() {
     const historyAtTarget = fullH.slice(0, historyIndex + 1);
     for (const m of historyAtTarget) tempGame.move(m.san);
 
-    // 2. Attempt the move
     const move = tempGame.move({ from, to, promotion: 'q' });
     if (move) {
-      // 3. Update the master gameRef with this new branch
       gameRef.current = tempGame;
       const newFullHistory = tempGame.history({ verbose: true });
       const newIndex = newFullHistory.length - 1;
@@ -365,6 +348,7 @@ function App() {
   }
 
   function navigateHistory(target, isRelative = false) {
+    setPreviewGame(null);
     let newIndex;
     const totalMoves = gameRef.current.history().length;
     if (target === -Infinity) newIndex = -1;
@@ -375,7 +359,6 @@ function App() {
     const historyAtTarget = gameRef.current.history({ verbose: true }).slice(0, newIndex + 1);
     const tempGame = new Chess();
     
-    // Get start position from gameRef history or current state
     const fullH = gameRef.current.history({verbose: true});
     const baseFen = fullH.length > 0 ? fullH[0].before : gameRef.current.fen();
     tempGame.load(baseFen);
@@ -385,7 +368,6 @@ function App() {
     _setGame(tempGame);
     setHistoryIndex(newIndex);
     
-    // Auto-analyze move if needed when navigating
     if (newIndex >= 0) handleAnalyzeMove(newIndex);
   }
 
@@ -421,12 +403,10 @@ function App() {
         positions.push({ fen: tempGame.fen(), san: move.san });
     }
 
-    // 1. Obtener evaluaciones rápidas para todos los estados de la partida (Stockfish)
     const allEvals = {};
     const CHUNK_SIZE = 10;
     const currentResults = {};
 
-    // Posición inicial
     currentResults[positions[0].fen] = { score: 0, classification: 'best', analysis: '', bestmove: '' };
 
     for (let i = 0; i < positions.length; i += CHUNK_SIZE) {
@@ -445,14 +425,12 @@ function App() {
                     bestmove: ev.bestmove
                 };
                 
-                // Si no es la posición inicial, pre-poblamos con datos de Stockfish
                 if (i + idx > 0) {
                     const pos = chunk[idx];
                     const prevPos = positions[i + idx - 1];
                     const currentGame = new Chess(pos.fen);
                     const uiScore = currentGame.turn() === 'b' ? -(ev.score || 0) : (ev.score || 0);
                     
-                    // El "Suggested Move" para el resultado de esta jugada debe ser el de la posición ANTERIOR
                     const suggestedMoveFromPrev = allEvals[prevPos.fen]?.bestmove || '...';
 
                     currentResults[pos.fen] = {
@@ -469,7 +447,6 @@ function App() {
 
     let wPerf = 0, bPerf = 0, wMoves = 0, bMoves = 0;
 
-    // Preparar payloads para el streaming
     const streamPayload = positions.slice(1).map((pos, idx) => {
         const prevPos = positions[idx];
         const prevGame = new Chess(prevPos.fen);
@@ -501,7 +478,6 @@ function App() {
 
     setBatchAnalysisResults({ ...currentResults });
 
-    // Hybrid Selection Algorithm: Prioritize first 2 errors, then fill with high-impact moves
     const errorClasses = ['inaccuracy', 'mistake', 'blunder'];
     const earlyErrors = streamPayload
         .filter(m => errorClasses.includes(m.classification))
@@ -532,7 +508,6 @@ function App() {
             setIsLoading(false);
             setAnalysisProgress(100);
             
-            // Garantizar que la precisión final se muestre correctamente
             setAccuracy({ 
                 white: wMoves ? (wPerf / wMoves).toFixed(1) : "0.0", 
                 black: bMoves ? (bPerf / bMoves).toFixed(1) : "0.0" 
@@ -542,7 +517,7 @@ function App() {
 
         try {
             const data = JSON.parse(event.data);
-            const { index, result, error } = data; // index is the original move index (1-based)
+            const { index, result, error } = data; 
             
             if (error) {
                 console.error(`Error at move ${index}:`, error);
@@ -584,6 +559,31 @@ function App() {
     };
   }
 
+  const onVariationMoveClick = useCallback((moveSan) => {
+    // Create a temporary game instance for the preview
+    const tempGame = new Chess();
+    const fullH = gameRef.current.history({verbose: true});
+    const baseFen = fullH.length > 0 ? fullH[0].before : gameRef.current.fen();
+    tempGame.load(baseFen);
+    
+    // Apply history up to current state
+    const historyAtTarget = fullH.slice(0, historyIndex + 1);
+    for (const m of historyAtTarget) tempGame.move(m.san);
+    
+    // Attempt the variation move
+    try {
+        const move = tempGame.move(moveSan);
+        if (move) {
+            setPreviewGame(tempGame); // Set preview game instead of modifying main game
+            console.log("Previewing move:", moveSan);
+        } else {
+            console.warn(`Move ${moveSan} not possible in current position`);
+        }
+    } catch (e) {
+        console.warn(`Invalid move notation: ${moveSan}`);
+    }
+  }, [gameRef, historyIndex]);
+
   return (
     <div className="h-screen bg-[#0b0f19] text-white flex flex-col font-sans overflow-hidden">
       
@@ -601,7 +601,6 @@ function App() {
         isLoading={isLoading}
       />
 
-      {/* Barra de progreso global */}
       {isLoading && (
         <div className="h-1 w-full bg-slate-800 relative z-50">
           <div 
@@ -625,7 +624,6 @@ function App() {
       <main className="flex-grow relative h-0">
         <div className="absolute inset-0 flex overflow-hidden">
           
-          {/* BARRA DE EVALUACIÓN */}
           <div className={`w-10 flex flex-col border-r border-slate-800 z-10 justify-end relative ${boardOrientation === 'white' ? 'bg-slate-900' : 'bg-white'}`}>
               <div
                   className={`w-full transition-all duration-500 ${boardOrientation === 'white' ? 'bg-white' : 'bg-slate-900'}`}
@@ -641,10 +639,8 @@ function App() {
               </div>
           </div>
           
-          {/* CONTENEDOR DEL TABLERO */}
           <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-2 sm:p-4 overflow-hidden text-center max-h-full">
             
-            {/* Jugador Superior */}
             <div className="mb-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center justify-between gap-2 shrink-0">
               <div className="flex items-center gap-2 truncate">
                 <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
@@ -662,12 +658,10 @@ function App() {
               )}
             </div>
 
-            {/* Tablero */}
             <div className="relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg shrink min-h-0">
               <div ref={boardRef} style={{ width: 'min(70vh, 70vw)', height: 'min(70vh, 70vw)' }} />
             </div>
 
-            {/* Jugador Inferior */}
             <div className="mt-1 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center justify-between gap-2 shrink-0">
               <div className="flex items-center gap-2 truncate">
                 <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
@@ -685,7 +679,6 @@ function App() {
               )}
             </div>
 
-            {/* Controles de Navegación (Manteniendo espacios compactos de diseño) */}
             <div className="mt-1.5 flex gap-2 sm:gap-3 items-center shrink-0">
               <button onClick={() => navigateHistory(-Infinity)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipBack className="w-4 h-4 sm:w-5 sm:h-5" /></button>
               <button onClick={() => navigateHistory(-1, true)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
@@ -696,15 +689,14 @@ function App() {
 
           </div>
 
-          {/* BARRA DE REDIMENSIONADO PRINCIPAL */}
           <div onMouseDown={startResizingH} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10" />
 
-          {/* SIDEBAR */}
           <div ref={sidebarRef} style={{ width: `${sidebarWidth}px` }} className="bg-[#161b22] border-l border-slate-800 flex flex-row shrink-0 h-full overflow-hidden">
               <AnalysisView 
                 currentAnalysis={currentAnalysis}
                 t={t}
                 markdownComponents={markdownComponents}
+                onVariationMoveClick={onVariationMoveClick}
               />
               
               <div onMouseDown={startResizingV} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10 h-full" />
