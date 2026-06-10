@@ -90,9 +90,3 @@ code, pre, .mono {
     border-color: #38bdf8;
 }
 
-.chess-piece-icon {
-    font-family: 'Noto Sans Symbols', "Segoe UI Symbol", sans-serif;
-    margin-right: 2px;
-    font-size: 1.1em;
-    pointer-events: none;
-}
