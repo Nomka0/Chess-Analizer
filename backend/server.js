@@ -229,52 +229,31 @@ function uciToSan(fen, uciMoves) {
 function getSystemPrompt(language) {
     const isEn = language === 'en';
     
-    return `You are a strict chess engine analytical text generator. 
-
-CRITICAL: Skip any thinking process. Do NOT include <think> tags or internal reasoning in your output. Go directly to the HTML response.
-
-RULE 1: DO NOT invent moves. Use ONLY the provided Stockfish lines.
-RULE 2: You MUST use the exact HTML structure below. Do NOT remove or modify the <details>, <summary>, or <div class="variation"> tags.
-RULE 3: Use Unicode chess symbols for piece moves: N=♘, B=♗, R=♖, Q=♕, K=♔ (e.g., ♘f3).
-RULE 4: If a section has no significant pros or cons, omit the section title and tags entirely.
-RULE 5: Inside <div class="variation">, provide ONLY complete variation moves as PGN. NEVER leave a move unfinished at the end. DO NOT include "...", or extra characters. Example: "1. e4 e5 2. Nf3".
-RULE 6: If the line is too long, truncate it at a COMPLETE move (e.g., stop at "10... ♘f6", not "11. ").
+    return `You are an expert chess analyst. 
+Your task is to analyze a chess move and output ONLY a valid JSON object. No markdown wrappers, no HTML.
 
 Context provided to you:
-- ${isEn ? 'User Move' : 'Jugada del usuario'}: [User Move with move number, e.g., 1... ♘d5]
-- ${isEn ? 'Evaluation' : 'Evaluación'}: [CP Loss]
-- ${isEn ? 'Expected Line' : 'Línea esperada'}: [Expected Line with move numbers and symbols]
-- ${isEn ? 'Best Move' : 'Mejor jugada'}: [Best Move with move numbers and symbols]
-- ${isEn ? 'Best Line' : 'Mejor línea'}: [Best Line with move numbers and symbols]
+- ${isEn ? 'User Move' : 'Jugada del usuario'}: The move played.
+- ${isEn ? 'Classification' : 'Clasificación'}: Blunder, mistake, or inaccuracy.
+- ${isEn ? 'Evaluation' : 'Evaluación'}: Centipawn loss (CP).
 
-Respond EXACTLY using this template:
-
-**[${isEn ? 'User Move' : 'Jugada del usuario'}]** es un/una **[${isEn ? 'inaccuracy/mistake/blunder' : 'inprecisión/error/grave'}]** ([Evaluación]cp). [1 ${isEn ? 'brief sentence explaining the tactical consequence' : 'breve oración explicando la consecuencia táctica de este movimiento'}].
-
-# ${isEn ? 'Cons' : 'Contras'}:
-
-<details>
-<summary>[${isEn ? 'Drawback 1' : 'Desventaja 1'}]</summary>
-<div class="variation">[${isEn ? 'Expected Line' : 'Línea esperada'}]</div>
-</details>
-
-# ${isEn ? 'Pros' : 'Pros'}:
-
-<details>
-<summary>[${isEn ? 'Positive aspect' : 'Ventaja 1'}]</summary>
-<div class="variation">[${isEn ? 'Expected Line' : 'Línea esperada'}]</div>
-</details>
-
----
-
-# ${isEn ? 'The correct alternative' : 'La alternativa correcta'}: [${isEn ? 'Best Move' : 'Mejor jugada'}]
-
-[1 ${isEn ? 'or 2 short sentences explaining why this move is superior, based on center control, development, or tactics' : 'o 2 oraciones breves explicando por qué esta jugada es superior, basándose en el control del centro, desarrollo o táctica'}].
-
-<details>
-<summary>${isEn ? 'See suggested continuation' : 'Ver continuación sugerida'}</summary>
-<div class="variation">[${isEn ? 'Best Line' : 'Mejor línea'}]</div>
-</details>`;
+Respond STRICTLY with a JSON object matching this structure:
+{
+  "generalExplanation": "${isEn ? "1 brief sentence explaining the tactical consequence." : "1 oración breve explicando la consecuencia de este movimiento."}",
+  "cons": {
+    "exists": true,
+    "title": "${isEn ? "Short title (e.g. 'Loss of material')" : "Título corto (ej. 'Pérdida de material')"}",
+    "explanation": "${isEn ? "Detailed explanation of why this move is bad." : "Explicación detallada de por qué es una desventaja."}"
+  },
+  "pros": {
+    "exists": true/false, // IMPORTANT: Set to false if it's a blunder. Set to true ONLY if the move has genuine redeeming qualities (like center control).
+    "title": "${isEn ? "Short title (e.g. 'Center control')" : "Título corto (ej. 'Desarrollo de piezas')"}",
+    "explanation": "${isEn ? "Explanation of the positive aspect." : "Explicación del aspecto positivo de esta jugada."}"
+  },
+  "alternative": {
+    "explanation": "${isEn ? "Elaborate explanation (2-3 sentences) on why the correct alternative is superior, focusing on center, development, or tactics." : "Explicación detallada (2-3 oraciones) de por qué la alternativa correcta es muy superior."}"
+  }
+}`;
 }
 
 /**
@@ -328,8 +307,21 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
     const chess = new Chess(fen);
     const moveNumber = Math.floor(chess.moveNumber());
     const prefix = chess.turn() === 'w' ? `${moveNumber}. ` : `${moveNumber}... `;
+
+    // Prepare userMove with transparent icons for Ollama prompt
+    let sanUserMove = 'N/A';
+    if (userMove) {
+        const unicodeMapping = { 'N': '♘', 'B': '♗', 'R': '♖', 'Q': '♕', 'K': '♔' };
+        let san = userMove;
+        if (unicodeMapping[san[0]]) {
+            san = unicodeMapping[san[0]] + san.substring(1);
+        }
+        sanUserMove = `${prefix}${san}`;
+    }
     
     let actualScore = bestScore;
+    let sanRefutationLine = 'N/A'; // <-- NUEVA VARIABLE
+
     try {
         const tempChess = new Chess(fen);
         const m = tempChess.move(userMove);
@@ -337,6 +329,13 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
             const postMoveEvaluation = await pool.addRequest(tempChess.fen(), moveTimeMs);
             // Flip score for comparison if it's black's turn to keep it relative to white or absolute
             actualScore = postMoveEvaluation.score;
+            
+            // <-- NUEVA LÓGICA: Traducir la línea que refuta el error
+            if (postMoveEvaluation.pv) {
+                sanRefutationLine = uciToSan(tempChess.fen(), postMoveEvaluation.pv);
+                // Le añadimos la jugada del usuario al inicio para que tenga contexto
+                sanRefutationLine = `${sanUserMove} ${sanRefutationLine}`; 
+            }
         }
     } catch (e) {
         console.error("Error evaluating post-move position:", e);
@@ -356,49 +355,75 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
         else mappedClassification = "inaccuracy";
     }
     
-    // Prepare userMove with transparent icons for Ollama prompt
-    let sanUserMove = 'N/A';
-    if (userMove) {
-        const unicodeMapping = { 'N': '♘', 'B': '♗', 'R': '♖', 'Q': '♕', 'K': '♔' };
-        let san = userMove;
-        if (unicodeMapping[san[0]]) {
-            san = unicodeMapping[san[0]] + san.substring(1);
-        }
-        sanUserMove = `${prefix}${san}`;
-    }
-
     const systemPrompt = getSystemPrompt(language);
     
     const userPrompt = `User Move: ${sanUserMove}
-Classification: ${mappedClassification}
-Evaluation: ${cpLoss}
-Expected Line: ${sanPv}
-Best Move: ${sanBestMove}
-Best Line: ${sanPv}`;
+    Classification: ${mappedClassification}
+    Evaluation: ${cpLoss}
+    Refutation Line (Use for Cons): ${sanRefutationLine}
+    Best Move: ${sanBestMove}
+    Best Line (Use for Alternative): ${sanPv}`;
 
-    // 3. Ollama Profiling
+    // 3. Ollama Profiling (JSON Mode)
     const startOllama = performance.now();
+    let generatedHtml = '';
+
     try {
-        // Combinamos el system prompt y el user prompt en un solo bloque plano
-        const fullPrompt = `${systemPrompt}\n\n[Context Data]\n${userPrompt}\n\nResponse:`;
+        const fullPrompt = `${systemPrompt}\n\n[Context Data]\n${userPrompt}`;
 
         const response = await ollama.generate({
             model: model,
             prompt: fullPrompt,
+            format: 'json', // <--- CRÍTICO: Fuerza a Ollama a devolver un JSON puro
             options: { 
-                temperature: 0.1,
-                num_predict: 1024,
+                temperature: 0.2, // Un poco de temperatura para mejorar la redacción
+                num_predict: 512, // Reducido: el JSON es mucho más corto que el HTML
                 num_ctx: 4096,
-                think:false
+                think: false
             }
         });
 
-        // Con .generate(), el texto viene directamente en response.response
-        const generatedContent = sanitizeLLMOutput(response.response);
-        console.log(`[Ollama Debug] Generated text length: ${generatedContent.length} characters.`);
+        // 4. Parsear el JSON y construir el HTML localmente en Node.js
+        let analysisData;
+        try {
+            // Limpieza preventiva por si el LLM pone tags de markdown "```json"
+            const rawJson = response.response.replace(/```json/gi, '').replace(/```/g, '').trim();
+            analysisData = JSON.parse(rawJson);
+        } catch (e) {
+            console.error("[Parse Error] Falló al leer el JSON de Ollama:", e);
+            throw new Error("El modelo no devolvió un JSON válido.");
+        }
+
+        const isEn = language === 'en';
+        
+        // Ensamblado perfecto del HTML sin tokens basura
+        generatedHtml = `**${sanUserMove}** es un/una **${mappedClassification}** (${cpLoss}cp). ${analysisData.generalExplanation}\n\n`;
+
+        if (analysisData.cons && analysisData.cons.exists) {
+            generatedHtml += `# ${isEn ? 'Cons' : 'Contras'}:\n`;
+            generatedHtml += `- ${analysisData.cons.explanation}\n`; // <-- Nueva explicación detallada
+            generatedHtml += `<details>\n<summary>${analysisData.cons.title}</summary>\n`;
+            generatedHtml += `<div class="variation">${sanRefutationLine}</div>\n</details>\n\n`;
+        }
+
+        if (analysisData.pros && analysisData.pros.exists) {
+            generatedHtml += `# ${isEn ? 'Pros' : 'Pros'}:\n`;
+            generatedHtml += `- ${analysisData.pros.explanation}\n`; // <-- Nueva explicación detallada
+            generatedHtml += `<details>\n<summary>${analysisData.pros.title}</summary>\n`;
+            // Para demostrar un Pro de la jugada del usuario, la línea que demuestra la realidad del tablero es la línea de refutación
+            generatedHtml += `<div class="variation">${sanRefutationLine}</div>\n</details>\n\n`;
+        }
+
+        generatedHtml += `--- \n\n# ${isEn ? 'The correct alternative' : 'La alternativa correcta'}: ${sanBestMove}\n\n`;
+        generatedHtml += `${analysisData.alternative.explanation}\n\n`; // <-- Explicación enriquecida
+        generatedHtml += `<details>\n<summary>${isEn ? 'See suggested continuation' : 'Ver continuación sugerida'}</summary>\n`;
+        generatedHtml += `<div class="variation">${sanPv}</div>\n</details>`;
+
+        // Limpiar jugadas incompletas con tu función existente
+        const cleanAnalysis = formatChessText(sanitizeLLMOutput(generatedHtml));
 
         const ollamaDuration = (performance.now() - startOllama).toFixed(1);
-        console.log(`[Perf: Ollama] [${fenId}] Inference Time: ${ollamaDuration}ms`);
+        console.log(`[Perf: Ollama] [${fenId}] Inference Time: ${ollamaDuration}ms (JSON Mode)`);
 
         const result = {
             fen,
@@ -406,7 +431,7 @@ Best Line: ${sanPv}`;
             score: actualScore,
             bestScore: bestScore,
             scoreType: evaluation.scoreType,
-            analysis: formatChessText(generatedContent),
+            analysis: cleanAnalysis,
             language,
             pv: evaluation.pv,
             cpLoss
@@ -414,6 +439,7 @@ Best Line: ${sanPv}`;
 
         setCachedAnalysis(fen, model, result, language);
         return result;
+
     } catch (err) {
         console.error(`[Ollama] Error:`, err);
         throw err;

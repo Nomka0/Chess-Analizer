@@ -6,7 +6,10 @@ import { Chess } from 'chess.js';
  * 1. Identify variation blocks and add metadata (sequence of moves, starting position).
  * 2. Make chess moves inside variation blocks clickable, and bold those outside.
  */
-export function formatAIAnalysisText(text) {
+/**
+ * Advanced chess text parser.
+ */
+export function formatAIAnalysisText(text, activeHistoryIndex = -1) {
     if (!text) return text;
 
     // 1. Target variation div wrappers and make moves inside them clickable
@@ -50,7 +53,7 @@ export function formatAIAnalysisText(text) {
         const parsedContent = content.replace(moveOnlyRegex, (moveMatch) => {
             const dataMove = moveMatch.replace(/\s+/g, '');
             if (/[a-h][1-8]/i.test(dataMove) || dataMove.startsWith('O-O')) {
-                return `<span class="clickable-move" data-move="${dataMove}">${moveMatch}</span>`;
+                return `<span class="clickable-move cursor-pointer hover:text-violet-400 transition-colors" data-move="${dataMove}">${moveMatch}</span>`;
             }
             return moveMatch;
         });
@@ -58,12 +61,15 @@ export function formatAIAnalysisText(text) {
         return `${prefix}<div class="variation variation-wrapper" data-variation="${moves.join(',')}" data-start-index="${startIndex}">${parsedContent}</div>`;
     });
 
-    // 2. Wrap moves OUTSIDE of variation blocks in <strong> tags instead of making them clickable
+    // 2. Wrap moves OUTSIDE of variation blocks to ALSO be clickable single-moves!
     const globalMoveRegex = /(<div.*?<\/div>|<span.*?<\/span>|<.*?>)|([NBRQK♘♗♖♕♔♞♝♜♛♚]?\s*[a-hA-H]?x?[a-hA-H][1-8](?:\+|=?[NBRQK♘♗♖♕♔♞♝♜♛♚])?|O-O(?:-O)?)/gi;
     
     return processed.replace(globalMoveRegex, (match, tag, move) => {
-        if (tag) return tag; // Return existing tag as-is
-        return `<strong>${move}</strong>`;
+        if (tag) return tag; // Return existing tag as-is (e.g. inside our variation div)
+        
+        const cleanMove = move.trim().replace(/\s+/g, '');
+        // We create a standalone clickable move. We use an underline to make it obvious to the user.
+        return `<span class="clickable-move font-semibold text-white cursor-pointer hover:text-violet-400 underline decoration-violet-500/30 underline-offset-2" data-move="${cleanMove}" data-variation="${cleanMove}" data-start-index="${activeHistoryIndex}">${move}</span>`;
     });
 }
 

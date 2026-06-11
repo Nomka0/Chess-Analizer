@@ -1,11 +1,17 @@
-import { useRef, useEffect } from 'react';
+import { useRef, useEffect, useMemo } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { Sparkles } from 'lucide-react';
-import { formatAIAnalysisText } from '../utils';
+import { formatAIAnalysisText } from '../utils'; // <-- Asegúrate de que la ruta sea correcta
 
 const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveClick, activeHistoryIndex, isAltBoardActive }) => {
   const containerRef = useRef(null);
+
+  // Parseamos el texto solo cuando cambia el análisis o el índice actual
+  const parsedAnalysisText = useMemo(() => {
+    if (!currentAnalysis?.analysis) return '';
+    return formatAIAnalysisText(currentAnalysis.analysis, activeHistoryIndex);
+  }, [currentAnalysis?.analysis, activeHistoryIndex]);
 
   // Effect to highlight the active move in a variation
   useEffect(() => {
@@ -40,15 +46,24 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveC
         e.preventDefault();
         const moveSan = moveNode.getAttribute('data-move');
         const variationWrapper = moveNode.closest('.variation-wrapper');
-        const variationSequence = variationWrapper ? variationWrapper.getAttribute('data-variation') : '';
-        const startIndex = variationWrapper ? variationWrapper.getAttribute('data-start-index') : '-1';
-        
+
+        const variationSequence = variationWrapper 
+            ? variationWrapper.getAttribute('data-variation') 
+            : moveNode.getAttribute('data-variation');
+ 
+        const startIndex = variationWrapper 
+            ? variationWrapper.getAttribute('data-start-index') 
+            : moveNode.getAttribute('data-start-index');
+
         let moveIndex = -1;
         if (variationWrapper) {
             const allMoves = Array.from(variationWrapper.querySelectorAll('.clickable-move'));
             moveIndex = allMoves.indexOf(moveNode);
+        } else {
+            // Si es un movimiento suelto, su índice en la "secuencia" siempre es 0
+            moveIndex = 0;
         }
-        
+
         if (onVariationMoveClick) {
             onVariationMoveClick(moveSan, variationSequence, moveIndex, parseInt(startIndex));
         }
@@ -91,7 +106,9 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveC
               </div>
             </div>
             <div className="prose-slate prose-invert max-w-none">
-                <ReactMarkdown components={markdownComponents} rehypePlugins={[rehypeRaw]}>{formatAIAnalysisText(currentAnalysis.analysis)}</ReactMarkdown>
+              <ReactMarkdown components={markdownComponents} rehypePlugins={[rehypeRaw]}>
+                    {parsedAnalysisText}
+                </ReactMarkdown>
             </div>
           </div>
         ) : (
