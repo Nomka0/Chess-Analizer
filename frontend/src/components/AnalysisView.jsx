@@ -1,11 +1,38 @@
-import { useRef } from 'react';
+import { useRef, useEffect } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { Sparkles } from 'lucide-react';
 import { formatAIAnalysisText } from '../utils';
 
-const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveClick }) => {
+const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveClick, activeHistoryIndex, isAltBoardActive }) => {
   const containerRef = useRef(null);
+
+  // Effect to highlight the active move in a variation
+  useEffect(() => {
+    if (!isAltBoardActive || !containerRef.current) return;
+
+    // Remove existing highlights
+    const highlighted = containerRef.current.querySelectorAll('.active-variation-move');
+    highlighted.forEach(el => el.classList.remove('active-variation-move', 'ring-2', 'ring-violet-500', 'bg-violet-500/20', 'rounded', 'px-1'));
+
+    // Find all variation wrappers
+    const wrappers = containerRef.current.querySelectorAll('.variation-wrapper');
+    wrappers.forEach(wrapper => {
+        const startIndex = parseInt(wrapper.getAttribute('data-start-index') || '-1');
+        if (startIndex === -1) return;
+
+        const moves = Array.from(wrapper.querySelectorAll('.clickable-move'));
+        moves.forEach((moveNode, index) => {
+            // If this move in the variation matches our active history index
+            if (startIndex + index === activeHistoryIndex) {
+                moveNode.classList.add('active-variation-move', 'ring-2', 'ring-violet-500', 'bg-violet-500/20', 'rounded', 'px-1');
+                
+                // Scroll into view if needed
+                moveNode.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+            }
+        });
+    });
+  }, [activeHistoryIndex, isAltBoardActive, currentAnalysis]);
 
   const handleTextClick = (e) => {
     const moveNode = e.target.closest('.clickable-move');

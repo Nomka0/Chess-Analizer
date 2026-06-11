@@ -250,25 +250,61 @@ function App() {
       setFenInput('');
     } catch (e) { alert("Import Error: " + e.message); }
   }, [fetchAvatar, syncGame]);
+  const handleAnalyzeMove = useCallback(async (index, specificHistory) => {
+    const activeHistory = specificHistory || historyRef.current;
+    if (index < 0 || index >= activeHistory.length) return;
+    const targetFen = activeHistory[index].after;
+    if (resultsRef.current[targetFen] && resultsRef.current[targetFen].analysis) return;
 
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
-      if (e.key === 'ArrowLeft') navigateHistory(-1, true);
-      if (e.key === 'ArrowRight') navigateHistory(1, true);
-    };
-    const handlePaste = (e) => {
-      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
-      const pastedText = e.clipboardData ? e.clipboardData.getData('text') : '';
-      if (pastedText) handleImportPgn(pastedText);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('paste', handlePaste);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('paste', handlePaste);
-    };
-  }, [historyIndex, history, handleImportPgn]);
+    const prevFen = activeHistory[index].before;
+    const userMove = activeHistory[index].san;
+
+    try {
+        const res = await fetch('http://localhost:3000/api/analyze', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                fen: prevFen, 
+                model: selectedModel, 
+                language,
+                userMove: userMove,
+                classification: 'good'
+            })
+        });
+        const data = await res.json();
+        setBatchAnalysisResults(prev => ({ ...prev, [targetFen]: data }));
+    } catch (e) { console.error(e); }
+  }, [selectedModel, language]);
+
+  const navigateHistory = useCallback((target, isRelative = false, isAlt = isAltBoardActive) => {
+    setPreviewGame(null);
+    let newIndex;
+    const gameInstance = isAlt ? altGameRef.current : gameRef.current;
+    const hIdx = isAlt ? altHistoryIndex : historyIndex;
+    const setHIdx = isAlt ? setAltHistoryIndex : setHistoryIndex;
+    const setGState = isAlt ? _setAltGame : _setGame;
+
+    const totalMoves = gameInstance.history().length;
+    if (target === -Infinity) newIndex = -1;
+    else if (target === Infinity) newIndex = totalMoves - 1;
+    else if (isRelative) newIndex = Math.max(-1, Math.min(hIdx + target, totalMoves - 1));
+    else newIndex = target;
+
+    const historyAtTarget = gameInstance.history({ verbose: true }).slice(0, newIndex + 1);
+    const tempGame = new Chess();
+
+    // Reset to base position
+    const fullH = gameInstance.history({verbose: true});
+    const baseFen = fullH.length > 0 ? fullH[0].before : gameInstance.fen();
+    tempGame.load(baseFen);
+
+    for (const m of historyAtTarget) tempGame.move(m.san);
+
+    setGState(tempGame);
+    setHIdx(newIndex);
+
+    if (!isAlt && newIndex >= 0) handleAnalyzeMove(newIndex);
+  }, [isAltBoardActive, altHistoryIndex, historyIndex, handleAnalyzeMove]);
 
   const stopResizing = useCallback(() => {
     isResizingH.current = false;
@@ -306,31 +342,76 @@ function App() {
     document.body.style.cursor = 'col-resize';
   }, [handleMouseMove, stopResizing]);
 
-  const handleAnalyzeMove = useCallback(async (index, specificHistory) => {
-    const activeHistory = specificHistory || historyRef.current;
-    if (index < 0 || index >= activeHistory.length) return;
-    const targetFen = activeHistory[index].after;
-    if (resultsRef.current[targetFen] && resultsRef.current[targetFen].analysis) return;
 
-    const prevFen = activeHistory[index].before;
-    const userMove = activeHistory[index].san;
+  useEffect(() => {
+    const handleGlobalClick = (e) => {
+      if (!isAltBoardActive) return;
+      const isAltBoardClick = e.target.closest('.alt-board-container');
+      const isVariationClick = e.target.closest('.variation-wrapper') || e.target.closest('.clickable-move');
+      if (!isAltBoardClick && !isVariationClick) {
+        setIsAltBoardActive(false);
+      }
+    };
+    window.addEventListener('mousedown', handleGlobalClick);
+    return () => window.removeEventListener('mousedown', handleGlobalClick);
+  }, [isAltBoardActive]);
 
-    try {
-        const res = await fetch('http://localhost:3000/api/analyze', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ 
-                fen: prevFen, 
-                model: selectedModel, 
-                language,
-                userMove: userMove,
-                classification: 'good'
-            })
-        });
-        const data = await res.json();
-        setBatchAnalysisResults(prev => ({ ...prev, [targetFen]: data }));
-    } catch (e) { console.error(e); }
-  }, [selectedModel, language]);
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+      if (e.key === 'ArrowLeft') {
+        navigateHistory(-1, true, isAltBoardActive);
+      }
+      if (e.key === 'ArrowRight') {
+        navigateHistory(1, true, isAltBoardActive);
+      }
+    };
+    const handlePaste = (e) => {
+      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+      const pastedText = e.clipboardData ? e.clipboardData.getData('text') : '';
+      if (pastedText) handleImportPgn(pastedText);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('paste', handlePaste);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('paste', handlePaste);
+    };
+  }, [isAltBoardActive, navigateHistory, handleImportPgn]);
+
+  const onDrop = useCallback((from, to) => {
+    setPreviewGame(null);
+    const tempGame = new Chess();
+    const fullH = gameRef.current.history({verbose: true});
+    const baseFen = fullH.length > 0 ? fullH[0].before : gameRef.current.fen();
+    tempGame.load(baseFen);
+    
+    // If we're on the main board, apply moves up to historyIndex
+    // If we're on the alt board, we probably shouldn't allow dropping or handle it differently.
+    // For now, let's assume we drop on the board that is currently active.
+    
+    const isAlt = isAltBoardActive;
+    const gameInstance = isAlt ? altGameRef.current : gameRef.current;
+    const hIdx = isAlt ? altHistoryIndex : historyIndex;
+
+    const currentHistory = gameInstance.history({ verbose: true }).slice(0, hIdx + 1);
+    for (const m of currentHistory) tempGame.move(m.san);
+
+    const move = tempGame.move({ from, to, promotion: 'q' });
+    if (move) {
+      if (isAlt) {
+        altGameRef.current = tempGame;
+        _setAltGame(new Chess(tempGame.fen()));
+        setAltHistoryIndex(tempGame.history().length - 1);
+      } else {
+        gameRef.current = tempGame;
+        syncGame();
+        const newIndex = tempGame.history().length - 1;
+        setHistoryIndex(newIndex);
+        handleAnalyzeMove(newIndex, tempGame.history({ verbose: true }));
+      }
+    }
+  }, [isAltBoardActive, altHistoryIndex, historyIndex, syncGame, handleAnalyzeMove]);
 
   useEffect(() => {
     if (boardRef.current) {
@@ -346,58 +427,7 @@ function App() {
       }
     }
     return () => { if (cg.current) cg.current.destroy(); cg.current = null; };
-  }, [currentFen, boardOrientation]);
-
-  function onDrop(from, to) {
-    setPreviewGame(null);
-    const tempGame = new Chess();
-    const fullH = gameRef.current.history({verbose: true});
-    const baseFen = fullH.length > 0 ? fullH[0].before : gameRef.current.fen();
-    tempGame.load(baseFen);
-    
-    const historyAtTarget = fullH.slice(0, historyIndex + 1);
-    for (const m of historyAtTarget) tempGame.move(m.san);
-
-    const move = tempGame.move({ from, to, promotion: 'q' });
-    if (move) {
-      gameRef.current = tempGame;
-      const newFullHistory = tempGame.history({ verbose: true });
-      const newIndex = newFullHistory.length - 1;
-      syncGame();
-      setHistoryIndex(newIndex);
-      handleAnalyzeMove(newIndex, newFullHistory);
-    }
-  }
-
-  function navigateHistory(target, isRelative = false, isAlt = isAltBoardActive) {
-    setPreviewGame(null);
-    let newIndex;
-    const gameInstance = isAlt ? altGameRef.current : gameRef.current;
-    const historyIndexState = isAlt ? altHistoryIndex : historyIndex;
-    const setHistoryIndexState = isAlt ? setAltHistoryIndex : setHistoryIndex;
-    const setGameState = isAlt ? _setAltGame : _setGame;
-
-    const totalMoves = gameInstance.history().length;
-    if (target === -Infinity) newIndex = -1;
-    else if (target === Infinity) newIndex = totalMoves - 1;
-    else if (isRelative) newIndex = Math.max(-1, Math.min(historyIndexState + target, totalMoves - 1));
-    else newIndex = target;
-
-    const historyAtTarget = gameInstance.history({ verbose: true }).slice(0, newIndex + 1);
-    const tempGame = new Chess();
-
-    // Reset to base position
-    const fullH = gameInstance.history({verbose: true});
-    const baseFen = fullH.length > 0 ? fullH[0].before : gameInstance.fen();
-    tempGame.load(baseFen);
-
-    for (const m of historyAtTarget) tempGame.move(m.san);
-
-    setGameState(tempGame);
-    setHistoryIndexState(newIndex);
-
-    if (!isAlt && newIndex >= 0) handleAnalyzeMove(newIndex);
-  }
+  }, [currentFen, boardOrientation, onDrop]);
 
   function handleFlip() {
     setBoardOrientation(prev => prev === 'white' ? 'black' : 'white');
@@ -611,7 +641,8 @@ function App() {
         newAltGame.move(m.san);
     }
 
-    // 5. Parse the variation sequence and apply moves up to the clicked index
+    // 5. Parse the variation sequence and apply ALL moves to the alt game
+    // This allows the user to navigate the entire suggested continuation by keyboard.
     const cleanMoveSan = cleanChessSymbolsOnly(moveSan);
     const moves = variationSequence
         ? variationSequence.split(',').map(m => cleanChessSymbolsOnly(m.trim()))
@@ -619,23 +650,40 @@ function App() {
 
     const targetMoveIndex = moveIndex >= 0 ? moveIndex : 0;
     
-    for (let i = 0; i <= targetMoveIndex; i++) {
+    // Apply ALL moves in the variation so we can navigate them all
+    for (let i = 0; i < moves.length; i++) {
         if (moves[i]) {
             try {
                 newAltGame.move(moves[i]);
             } catch (e) {
-                console.error(`Failed to apply move ${moves[i]} at variation index ${i}:`, e);
+                // If a later move in the sequence fails, we just stop there
                 break;
             }
         }
     }
 
-    // 6. Update the alt game state
+    // 6. Save the FULL game to the ref
     altGameRef.current = newAltGame;
-    _setAltGame(newAltGame); // Update state to trigger re-render
+
+    // 7. Create the specific board state for the CLICKED move
+    const clickedMoveGame = new Chess(mainBaseFen);
+    for (const m of movesBefore) {
+        clickedMoveGame.move(m.san);
+    }
+    for (let i = 0; i <= targetMoveIndex; i++) {
+        if (moves[i]) {
+            try {
+                clickedMoveGame.move(moves[i]);
+            } catch (e) {
+                break;
+            }
+        }
+    }
+
+    _setAltGame(clickedMoveGame); // Update state to trigger re-render
     
-    // 7. Update alt history index to the new position
-    const newAltIndex = movesBefore.length + (targetMoveIndex + 1); 
+    // 8. Update alt history index to the clicked position
+    const newAltIndex = movesBefore.length + targetMoveIndex; 
     setAltHistoryIndex(newAltIndex);
 
   }, [gameRef, setAltHistoryIndex, setIsAltBoardActive]);
@@ -714,7 +762,7 @@ function App() {
               )}
             </div>
 
-            <div className="relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg shrink min-h-0">
+            <div className={`relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg shrink min-h-0 alt-board-container transition-all duration-300 ${isAltBoardActive ? 'ring-4 ring-violet-500/50' : 'ring-1 ring-slate-800'}`}>
               <div ref={boardRef} style={{ width: 'min(70vh, 70vw)', height: 'min(70vh, 70vw)' }} />
             </div>
 
@@ -756,6 +804,8 @@ function App() {
                 t={t}
                 markdownComponents={markdownComponents}
                 onVariationMoveClick={onVariationMoveClick}
+                activeHistoryIndex={activeHistoryIndex}
+                isAltBoardActive={isAltBoardActive}
               />
               
               <div onMouseDown={startResizingV} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10 h-full" />
