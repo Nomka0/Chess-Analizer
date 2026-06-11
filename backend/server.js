@@ -231,6 +231,8 @@ function getSystemPrompt(language) {
     
     return `You are a strict chess engine analytical text generator. 
 
+CRITICAL: Skip any thinking process. Do NOT include <think> tags or internal reasoning in your output. Go directly to the HTML response.
+
 RULE 1: DO NOT invent moves. Use ONLY the provided Stockfish lines.
 RULE 2: You MUST use the exact HTML structure below. Do NOT remove or modify the <details>, <summary>, or <div class="variation"> tags.
 RULE 3: Use Unicode chess symbols for piece moves: N=♘, B=♗, R=♖, Q=♕, K=♔ (e.g., ♘f3).
@@ -377,20 +379,22 @@ Best Line: ${sanPv}`;
     // 3. Ollama Profiling
     const startOllama = performance.now();
     try {
-        const response = await ollama.chat({
+        // Combinamos el system prompt y el user prompt en un solo bloque plano
+        const fullPrompt = `${systemPrompt}\n\n[Context Data]\n${userPrompt}\n\nResponse:`;
+
+        const response = await ollama.generate({
             model: model,
-            messages: [
-                { role: 'system', content: systemPrompt },
-                { role: 'user', content: userPrompt }
-            ],
+            prompt: fullPrompt,
             options: { 
-                temperature: 0.2,
-                num_predict: 500,
-                num_ctx: 2048
+                temperature: 0.1,
+                num_predict: 1024,
+                num_ctx: 4096,
+                think:false
             }
         });
 
-        const generatedContent = sanitizeLLMOutput(response.message.content);
+        // Con .generate(), el texto viene directamente en response.response
+        const generatedContent = sanitizeLLMOutput(response.response);
         console.log(`[Ollama Debug] Generated text length: ${generatedContent.length} characters.`);
 
         const ollamaDuration = (performance.now() - startOllama).toFixed(1);
