@@ -9,6 +9,7 @@ import Header from './components/Header';
 import AnalysisView from './components/AnalysisView';
 import MatchProgress from './components/MatchProgress';
 import { ArrowUpDown, ChevronLeft, ChevronRight, SkipBack, SkipForward } from 'lucide-react';
+import { cleanChessSymbolsOnly } from './utils';
 
 const markdownComponents = {
   h1: ({...props}) => <h1 className="text-lg font-black text-violet-400 mt-4 mb-2 border-b border-slate-800 pb-1 uppercase tracking-wider" {...props} />,
@@ -22,11 +23,11 @@ const markdownComponents = {
   blockquote: ({...props}) => <blockquote className="border-l-2 border-violet-500/50 pl-4 py-1 my-4 bg-violet-500/5 italic text-slate-300 rounded-r shadow-sm" {...props} />,
   details: ({...props}) => <details className="mb-2 group" {...props} />,
   summary: ({...props}) => <summary className="cursor-pointer text-slate-300 text-xs font-semibold hover:text-violet-400 list-none flex items-center gap-2 before:content-['•'] before:text-violet-500" {...props} />,
-  div: ({node, className, ...props}) => {
-    if (className === 'variation') {
-      return <div className="pl-3 py-1.5 text-[11px] font-mono text-slate-400 border-l-2 border-slate-700 ml-1 mt-1 bg-slate-800/30 rounded-r" {...props} />;
+  div: ({className, ...props}) => {
+    if (className?.includes('variation')) {
+      return <div className={`pl-3 py-1.5 text-[11px] font-mono text-slate-400 border-l-2 border-slate-700 ml-1 mt-1 bg-slate-800/30 rounded-r ${className}`} {...props} />;
     }
-    return <div {...props} />;
+    return <div className={className} {...props} />;
   }
 };
 
@@ -89,10 +90,19 @@ const translations = {
 
 function App() {
   const gameRef = useRef(new Chess());
+  const altGameRef = useRef(new Chess());
   const [game, _setGame] = useState(new Chess());
+  const [altGame, _setAltGame] = useState(new Chess());
+  const [isAltBoardActive, setIsAltBoardActive] = useState(false);
   const [previewGame, setPreviewGame] = useState(null);
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
+  const historyIndexRef = useRef(-1);
+  useEffect(() => { historyIndexRef.current = historyIndex; }, [historyIndex]);
+  
+  const [altHistoryIndex, setAltHistoryIndex] = useState(-1);
+  const altHistoryIndexRef = useRef(-1);
+  useEffect(() => { altHistoryIndexRef.current = altHistoryIndex; }, [altHistoryIndex]);
   const [boardOrientation, setBoardOrientation] = useState('white');
   const [playerNames, setPlayerNames] = useState({ 
     white: 'White', black: 'Black', 
@@ -116,6 +126,11 @@ function App() {
   const syncGame = useCallback(() => {
     _setGame(new Chess(gameRef.current.fen()));
     setHistory(gameRef.current.history({ verbose: true }));
+  }, []);
+
+
+  const toggleBoard = useCallback(() => {
+      setIsAltBoardActive(prev => !prev);
   }, []);
 
   const centipawnsToWinProb = (cp) => 1 / (1 + Math.pow(10, -cp / 400));
@@ -151,11 +166,18 @@ function App() {
   const sidebarRef = useRef(null);
   
   const t = translations[language];
-  const currentFen = previewGame ? previewGame.fen() : game.fen();
+  const activeGame = isAltBoardActive ? altGame : game;
+  const currentFen = previewGame ? previewGame.fen() : activeGame.fen();
+  
+  // Derive analysis from the main game's state (using the 'game' state variable for reactivity)
+  const currentMainFen = game.fen();
+
+  const activeHistory = isAltBoardActive ? altGameRef.current.history({ verbose: true }) : history;
+  const activeHistoryIndex = isAltBoardActive ? altHistoryIndex : historyIndex;
   
   const currentAnalysis = useMemo(() => {
-      return batchAnalysisResults[currentFen] || null;
-  }, [currentFen, batchAnalysisResults]);
+      return batchAnalysisResults[currentMainFen] || null;
+  }, [currentMainFen, batchAnalysisResults]);
 
   const evalScore = currentAnalysis?.score || 0;
   
@@ -347,28 +369,34 @@ function App() {
     }
   }
 
-  function navigateHistory(target, isRelative = false) {
+  function navigateHistory(target, isRelative = false, isAlt = isAltBoardActive) {
     setPreviewGame(null);
     let newIndex;
-    const totalMoves = gameRef.current.history().length;
+    const gameInstance = isAlt ? altGameRef.current : gameRef.current;
+    const historyIndexState = isAlt ? altHistoryIndex : historyIndex;
+    const setHistoryIndexState = isAlt ? setAltHistoryIndex : setHistoryIndex;
+    const setGameState = isAlt ? _setAltGame : _setGame;
+
+    const totalMoves = gameInstance.history().length;
     if (target === -Infinity) newIndex = -1;
     else if (target === Infinity) newIndex = totalMoves - 1;
-    else if (isRelative) newIndex = Math.max(-1, Math.min(historyIndex + target, totalMoves - 1));
+    else if (isRelative) newIndex = Math.max(-1, Math.min(historyIndexState + target, totalMoves - 1));
     else newIndex = target;
 
-    const historyAtTarget = gameRef.current.history({ verbose: true }).slice(0, newIndex + 1);
+    const historyAtTarget = gameInstance.history({ verbose: true }).slice(0, newIndex + 1);
     const tempGame = new Chess();
-    
-    const fullH = gameRef.current.history({verbose: true});
-    const baseFen = fullH.length > 0 ? fullH[0].before : gameRef.current.fen();
+
+    // Reset to base position
+    const fullH = gameInstance.history({verbose: true});
+    const baseFen = fullH.length > 0 ? fullH[0].before : gameInstance.fen();
     tempGame.load(baseFen);
 
     for (const m of historyAtTarget) tempGame.move(m.san);
-    
-    _setGame(tempGame);
-    setHistoryIndex(newIndex);
-    
-    if (newIndex >= 0) handleAnalyzeMove(newIndex);
+
+    setGameState(tempGame);
+    setHistoryIndexState(newIndex);
+
+    if (!isAlt && newIndex >= 0) handleAnalyzeMove(newIndex);
   }
 
   function handleFlip() {
@@ -559,30 +587,58 @@ function App() {
     };
   }
 
-  const onVariationMoveClick = useCallback((moveSan) => {
-    // Create a temporary game instance for the preview
-    const tempGame = new Chess();
-    const fullH = gameRef.current.history({verbose: true});
-    const baseFen = fullH.length > 0 ? fullH[0].before : gameRef.current.fen();
-    tempGame.load(baseFen);
+  const onVariationMoveClick = useCallback((moveSan, variationSequence, moveIndex = -1, startIndex = -1) => {
+    // 1. Force Alt Board to be active
+    setIsAltBoardActive(true);
+
+    // Get the currently viewed history index from the refs
+    const hIndex = historyIndexRef.current;
     
-    // Apply history up to current state
-    const historyAtTarget = fullH.slice(0, historyIndex + 1);
-    for (const m of historyAtTarget) tempGame.move(m.san);
+    // 2. Determine the starting point for this variation.
+    const currentIndex = startIndex >= 0 ? startIndex : hIndex;
     
-    // Attempt the variation move
-    try {
-        const move = tempGame.move(moveSan);
-        if (move) {
-            setPreviewGame(tempGame); // Set preview game instead of modifying main game
-            console.log("Previewing move:", moveSan);
-        } else {
-            console.warn(`Move ${moveSan} not possible in current position`);
-        }
-    } catch (e) {
-        console.warn(`Invalid move notation: ${moveSan}`);
+    // 3. Create a new alt game instance based on the base position of the main game
+    const fullHistory = gameRef.current.history({ verbose: true });
+    const mainBaseFen = fullHistory.length > 0 ? fullHistory[0].before : gameRef.current.fen();
+    const newAltGame = new Chess(mainBaseFen);
+
+    // 4. Replay moves from the MAIN game UP TO the resolved base index
+    const movesBefore = fullHistory.slice(0, currentIndex);
+    
+    // Ensure the newAltGame is loaded with the base FEN before replaying
+    newAltGame.load(mainBaseFen);
+    for (const m of movesBefore) {
+        newAltGame.move(m.san);
     }
-  }, [gameRef, historyIndex]);
+
+    // 5. Parse the variation sequence and apply moves up to the clicked index
+    const cleanMoveSan = cleanChessSymbolsOnly(moveSan);
+    const moves = variationSequence
+        ? variationSequence.split(',').map(m => cleanChessSymbolsOnly(m.trim()))
+        : [cleanMoveSan];
+
+    const targetMoveIndex = moveIndex >= 0 ? moveIndex : 0;
+    
+    for (let i = 0; i <= targetMoveIndex; i++) {
+        if (moves[i]) {
+            try {
+                newAltGame.move(moves[i]);
+            } catch (e) {
+                console.error(`Failed to apply move ${moves[i]} at variation index ${i}:`, e);
+                break;
+            }
+        }
+    }
+
+    // 6. Update the alt game state
+    altGameRef.current = newAltGame;
+    _setAltGame(newAltGame); // Update state to trigger re-render
+    
+    // 7. Update alt history index to the new position
+    const newAltIndex = movesBefore.length + (targetMoveIndex + 1); 
+    setAltHistoryIndex(newAltIndex);
+
+  }, [gameRef, setAltHistoryIndex, setIsAltBoardActive]);
 
   return (
     <div className="h-screen bg-[#0b0f19] text-white flex flex-col font-sans overflow-hidden">
@@ -680,11 +736,14 @@ function App() {
             </div>
 
             <div className="mt-1.5 flex gap-2 sm:gap-3 items-center shrink-0">
-              <button onClick={() => navigateHistory(-Infinity)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipBack className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-              <button onClick={() => navigateHistory(-1, true)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+              <button onClick={toggleBoard} className={`p-2 sm:p-3 rounded-lg transition ${isAltBoardActive ? 'bg-violet-600 hover:bg-violet-500' : 'bg-slate-800 hover:bg-slate-700'}`}>
+                {isAltBoardActive ? 'Alt' : 'Main'}
+              </button>
+              <button onClick={() => navigateHistory(-Infinity, false, isAltBoardActive)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipBack className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+              <button onClick={() => navigateHistory(-1, true, isAltBoardActive)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
               <button onClick={handleFlip} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ArrowUpDown className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-              <button onClick={() => navigateHistory(1, true)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" /></button>
-              <button onClick={() => navigateHistory(Infinity)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipForward className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+              <button onClick={() => navigateHistory(1, true, isAltBoardActive)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronRight className="w-4 h-4 sm:w-5 sm:h-5" /></button>
+              <button onClick={() => navigateHistory(Infinity, false, isAltBoardActive)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipForward className="w-4 h-4 sm:w-5 sm:h-5" /></button>
             </div>
 
           </div>
@@ -702,12 +761,12 @@ function App() {
               <div onMouseDown={startResizingV} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10 h-full" />
 
               <div style={{ width: `${moveListWidth}px` }} className="border-l border-slate-800 flex flex-col shrink-0 h-full">
-                  <MatchProgress 
+                  <MatchProgress
                       t={t}
                       history={history}
                       batchAnalysisResults={batchAnalysisResults}
                       historyIndex={historyIndex}
-                      navigateHistory={navigateHistory}
+                      navigateHistory={(target) => navigateHistory(target, false, false)}
                       historyContainerRef={historyContainerRef}
                   />
               </div>

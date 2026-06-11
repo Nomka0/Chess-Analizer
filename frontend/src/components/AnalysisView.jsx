@@ -1,4 +1,4 @@
-import React, { useRef, useMemo } from 'react';
+import { useRef } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { Sparkles } from 'lucide-react';
@@ -12,9 +12,18 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveC
     if (moveNode) {
         e.preventDefault();
         const moveSan = moveNode.getAttribute('data-move');
+        const variationWrapper = moveNode.closest('.variation-wrapper');
+        const variationSequence = variationWrapper ? variationWrapper.getAttribute('data-variation') : '';
+        const startIndex = variationWrapper ? variationWrapper.getAttribute('data-start-index') : '-1';
+        
+        let moveIndex = -1;
+        if (variationWrapper) {
+            const allMoves = Array.from(variationWrapper.querySelectorAll('.clickable-move'));
+            moveIndex = allMoves.indexOf(moveNode);
+        }
         
         if (onVariationMoveClick) {
-            onVariationMoveClick(moveSan);
+            onVariationMoveClick(moveSan, variationSequence, moveIndex, parseInt(startIndex));
         }
 
         // DEFER FOCUS: Wait for React's reconciliation and DOM updates to finish

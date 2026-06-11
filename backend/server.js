@@ -235,6 +235,8 @@ RULE 1: DO NOT invent moves. Use ONLY the provided Stockfish lines.
 RULE 2: You MUST use the exact HTML structure below. Do NOT remove or modify the <details>, <summary>, or <div class="variation"> tags.
 RULE 3: Use Unicode chess symbols for piece moves: N=♘, B=♗, R=♖, Q=♕, K=♔ (e.g., ♘f3).
 RULE 4: If a section has no significant pros or cons, omit the section title and tags entirely.
+RULE 5: Inside <div class="variation">, provide ONLY complete variation moves as PGN. NEVER leave a move unfinished at the end. DO NOT include "...", or extra characters. Example: "1. e4 e5 2. Nf3".
+RULE 6: If the line is too long, truncate it at a COMPLETE move (e.g., stop at "10... ♘f6", not "11. ").
 
 Context provided to you:
 - ${isEn ? 'User Move' : 'Jugada del usuario'}: [User Move with move number, e.g., 1... ♘d5]
@@ -271,6 +273,30 @@ Respond EXACTLY using this template:
 <summary>${isEn ? 'See suggested continuation' : 'Ver continuación sugerida'}</summary>
 <div class="variation">[${isEn ? 'Best Line' : 'Mejor línea'}]</div>
 </details>`;
+}
+
+/**
+ * Sanitizes LLM output to ensure variations don't end with incomplete moves or trailing move numbers.
+ */
+function sanitizeLLMOutput(text) {
+    if (!text) return text;
+    
+    // Remove incomplete moves at the end of variation blocks
+    // Matches trailing move numbers like "7. " or "7... " or "7. ♘ "
+    return text.replace(/<div class="variation">(.*?)<\/div>/gs, (match, content) => {
+        let cleaned = content.trim();
+        
+        // Remove trailing move numbers (e.g., "10. " or "10... ")
+        cleaned = cleaned.replace(/\s*\d+(\.{1,3})\s*$/g, '');
+        
+        // Remove trailing piece symbols without a square (e.g., "10. ♘")
+        cleaned = cleaned.replace(/\s*\d+(\.{1,3})\s*[♘♗♖♕♔♞♝♜♛♚]\s*$/g, '');
+        
+        // General cleanup: remove trailing dots or symbols if they don't look like a move
+        cleaned = cleaned.replace(/[\.♘♗♖♕♔♞♝♜♛♚]\s*$/g, '');
+
+        return `<div class="variation">${cleaned}</div>`;
+    });
 }
 
 async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs = 200, userMove, classification) {
@@ -359,12 +385,12 @@ Best Line: ${sanPv}`;
             ],
             options: { 
                 temperature: 0.2,
-                num_predict: 350,
+                num_predict: 500,
                 num_ctx: 2048
             }
         });
 
-        const generatedContent = response.message.content;
+        const generatedContent = sanitizeLLMOutput(response.message.content);
         console.log(`[Ollama Debug] Generated text length: ${generatedContent.length} characters.`);
 
         const ollamaDuration = (performance.now() - startOllama).toFixed(1);
