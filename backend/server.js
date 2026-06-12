@@ -29,6 +29,7 @@ class StockfishWorker {
     this.score = null;
     this.scoreType = 'cp';
     this.pv = '';
+    this.buffer = ''; // <-- Almacena fragmentos incompletos
     this.initPromise = this.init();
   }
 
@@ -38,8 +39,12 @@ class StockfishWorker {
         this.engine = spawn('stockfish');
         
         this.engine.stdout.on('data', (data) => {
-          const lines = data.toString().split('\n');
-          for (const line of lines) {
+          this.buffer += data.toString();
+          let newlineIdx;
+          // Procesamos línea por línea ÚNICAMENTE cuando encontramos un salto de línea real
+          while ((newlineIdx = this.buffer.indexOf('\n')) !== -1) {
+            const line = this.buffer.substring(0, newlineIdx);
+            this.buffer = this.buffer.substring(newlineIdx + 1);
             this.handleEngineLine(line.trim());
           }
         });
@@ -70,7 +75,6 @@ class StockfishWorker {
 
   handleEngineLine(line) {
     if (!line) return;
-    // console.log(`[SF ${this.id}] ${line}`); // Optional verbose logging
 
     if (line.startsWith('info') && line.includes('score')) {
       const parts = line.split(' ');
@@ -93,17 +97,19 @@ class StockfishWorker {
       if (this.currentResolve) {
         const result = { 
           bestmove: this.bestMove, 
-          score: this.score, 
+          score: this.score ?? 0, 
           scoreType: this.scoreType,
           pv: this.pv
         };
-        this.currentResolve(result);
-        this.cleanup();
+        const resolveFn = this.currentResolve;
+        this.cleanup(); // Limpia los estados ANTES de resolver para evitar fugas de datos
+        resolveFn(result);
       }
     }
   }
 
   cleanup() {
+    this.isBusy = false; // <-- CRÍTICO: Liberar el worker para que acepte más tareas
     this.currentResolve = null;
     this.currentReject = null;
     this.bestMove = null;
@@ -112,29 +118,33 @@ class StockfishWorker {
     this.pv = '';
   }
 
-  async evaluate(fen, moveTimeMs = 200) {
+  async evaluate(fen, options = { moveTimeMs: 200, depth: null }) {
     this.isBusy = true;
-    const startExec = performance.now();
-    const fenId = getFenId(fen);
+    this.buffer = ''; // Limpiar el buffer antes de iniciar una lectura nueva
 
     return new Promise((resolve, reject) => {
       this.currentResolve = resolve;
       this.currentReject = reject;
-      
+
       this.engine.stdin.write(`position fen ${fen}\n`);
-      this.engine.stdin.write(`go depth 16\n`);
+      
+      // Si se especifica profundidad, usamos depth. Si no, caemos en movetime.
+      if (options.depth) {
+        this.engine.stdin.write(`go depth ${options.depth}\n`);
+      } else {
+        this.engine.stdin.write(`go movetime ${options.moveTimeMs}\n`); 
+      }
+
+      // Ajustamos el timeout de seguridad dinámicamente
+      const timeoutDuration = options.depth ? 8000 : (options.moveTimeMs + 2000);
 
       setTimeout(() => {
         if (this.currentResolve === resolve) {
-          this.isBusy = false;
+          console.warn(`[Stockfish ${this.id}] Timeout de emergencia disparado para FEN: ${fen.substring(0,15)}`);
           this.cleanup();
           reject(new Error(`Stockfish ${this.id} evaluation timed out`));
         }
-      }, 3000);
-    }).finally(() => {
-      this.isBusy = false;
-      const duration = (performance.now() - startExec).toFixed(1);
-      console.log(`[Perf: Stockfish] [${fenId}] Execution on worker ${this.id}: ${duration}ms`);
+      }, timeoutDuration); 
     });
   }
 }
@@ -150,10 +160,10 @@ class StockfishPool {
     console.log(`[Pool] All ${ENGINE_COUNT} workers initialized.`);
   }
 
-  async addRequest(fen, moveTimeMs) {
+  async addRequest(fen, options) {
     const startQueue = performance.now();
     return new Promise((resolve, reject) => {
-      this.queue.push({ fen, moveTimeMs, resolve, reject, startQueue });
+      this.queue.push({ fen, options, resolve, reject, startQueue });
       this.processQueue();
     });
   }
@@ -164,13 +174,13 @@ class StockfishPool {
     const idleWorker = this.workers.find(w => !w.isBusy);
     if (!idleWorker) return;
 
-    const { fen, moveTimeMs, resolve, reject, startQueue } = this.queue.shift();
+    const { fen, options, resolve, reject, startQueue } = this.queue.shift();
     
     const waitTime = (performance.now() - startQueue).toFixed(1);
     console.log(`[Perf: Stockfish] [${getFenId(fen)}] Queue Wait Time: ${waitTime}ms`);
 
     try {
-      const result = await idleWorker.evaluate(fen, moveTimeMs);
+      const result = await idleWorker.evaluate(fen, options);
       resolve(result);
     } catch (err) {
       reject(err);
@@ -187,37 +197,27 @@ function uciToSan(fen, uciMoves) {
     const sanMoves = [];
     const moves = uciMoves.split(' ');
     
-    const unicodeMapping = {
-        'N': '♘', 'B': '♗', 'R': '♖', 'Q': '♕', 'K': '♔'
-    };
-
-    let turn = chess.turn();
-    let moveNumber = Math.floor(chess.moveNumber());
-    
     for (const uci of moves) {
         try {
+            const moveNumber = chess.moveNumber();
+            const turn = chess.turn();
+            
             const from = uci.substring(0, 2);
             const to = uci.substring(2, 4);
             const promotion = uci.substring(4) || 'q';
             const move = chess.move({ from, to, promotion });
-            if (move) {
-                let movePrefix = "";
-                if (turn === 'w') {
-                    movePrefix = `${moveNumber}. `;
-                } else {
-                    movePrefix = `${moveNumber}... `;
-                    moveNumber++;
-                }
-                
-                // Use transparent icons for internal processing and Ollama prompt
-                let san = move.san;
-                const firstChar = san[0];
-                if (unicodeMapping[firstChar]) {
-                    san = unicodeMapping[firstChar] + san.substring(1);
-                }
 
-                sanMoves.push(`${movePrefix}${san}`);
-                turn = chess.turn();
+            if (move) {
+                if (turn === 'w') {
+                    sanMoves.push(`${moveNumber}. ${move.san}`);
+                } else {
+                    // Si la cadena de movimientos empieza en el turno de las negras
+                    if (sanMoves.length === 0) {
+                        sanMoves.push(`${moveNumber}... ${move.san}`);
+                    } else {
+                        sanMoves.push(move.san); // Sin número extra
+                    }
+                }
             }
         } catch (e) {
             break;
@@ -226,44 +226,50 @@ function uciToSan(fen, uciMoves) {
     return sanMoves.join(' ');
 }
 
-function getSystemPrompt(language) {
+function getSystemPrompt(language, playerColor) {
     const isEn = language === 'en';
+    const colorName = playerColor === 'w' ? (isEn ? 'White' : 'Blancas') : (isEn ? 'Black' : 'Negras');
+    const opponentColor = playerColor === 'w' ? (isEn ? 'Black' : 'Negras') : (isEn ? 'White' : 'Blancas');
     
     return `You are an expert chess analyst. 
 Your task is to analyze a chess move and output ONLY a valid JSON object. No markdown wrappers, no HTML.
 
-Context provided to you:
-- ${isEn ? 'User Move' : 'Jugada del usuario'}: The move played.
-- ${isEn ? 'Classification' : 'Clasificación'}: Blunder, mistake, or inaccuracy.
-- ${isEn ? 'Evaluation' : 'Evaluación'}: Centipawn loss (CP).
+The user is playing with the **${colorName}** pieces. Their opponent is playing with the **${opponentColor}** pieces.
+
+CRITICAL RULES TO AVOID HALLUCINATIONS AND BIAS:
+1. IDENTIFY THE TURN CORRECTLY: 
+   - Moves starting with a single dot (e.g., "4. dxe4") are ALWAYS made by White.
+   - Moves starting with three dots (e.g., "4... dxe4") are ALWAYS made by Black.
+   - Never say the enemy captured something if the move was played by the player's own color.
+2. For pawn captures (e.g., 'dxe4', 'exd5'), simply say "captures on e4" or "captures a piece". Do not invent what piece was there.
+3. Analyze the position EXCLUSIVELY from the perspective of the ${colorName} pieces.
+4. If the move attacks the opponent, it is a "Pro". If it harms the player, it is a "Con".
+5. DO NOT INVENT OR SUGGEST YOUR OWN MOVES. The mathematical engine has already calculated the absolute truth. You MUST strictly base your entire analysis on the "Best Move", "Best Line", and "Refutation Line" provided in the [Context Data].
+6. You are forbidden from suggesting a different alternative. If the [Context Data] says the "Best Move" is Nf6, your alternative explanation must ONLY be about why Nf6 is good.
 
 Respond STRICTLY with a JSON object matching this structure:
 {
-  "generalExplanation": "${isEn ? "1 brief sentence explaining the tactical consequence." : "1 oración breve explicando la consecuencia de este movimiento."}",
+  "generalExplanation": "${isEn ? "1 brief sentence explaining the tactical consequence based ONLY on the context data." : "1 oración breve explicando la consecuencia táctica basada SOLO en los datos de contexto provistos."}",
   "cons": {
     "exists": true,
-    "title": "${isEn ? "Short title (e.g. 'Loss of material')" : "Título corto (ej. 'Pérdida de material')"}",
-    "explanation": "${isEn ? "Detailed explanation of why this move is bad." : "Explicación detallada de por qué es una desventaja."}"
+    "title": "${isEn ? "Short title" : "Título corto"}",
+    "explanation": "${isEn ? "Detailed explanation of why the User Move is bad, strictly based on the Refutation Line provided." : "Explicación detallada de por qué la jugada del usuario es mala, basada estrictamente en la Refutation Line provista."}"
   },
   "pros": {
-    "exists": true/false, // IMPORTANT: Set to false if it's a blunder. Set to true ONLY if the move has genuine redeeming qualities (like center control).
-    "title": "${isEn ? "Short title (e.g. 'Center control')" : "Título corto (ej. 'Desarrollo de piezas')"}",
-    "explanation": "${isEn ? "Explanation of the positive aspect." : "Explicación del aspecto positivo de esta jugada."}"
+    "exists": true,
+    "title": "${isEn ? "Short title" : "Título corto"}",
+    "explanation": "${isEn ? "Explanation of the positive aspect." : "Explicación del aspecto positivo."}"
   },
   "alternative": {
-    "explanation": "${isEn ? "Elaborate explanation (2-3 sentences) on why the correct alternative is superior, focusing on center, development, or tactics." : "Explicación detallada (2-3 oraciones) de por qué la alternativa correcta es muy superior."}"
+    "explanation": "${isEn ? "Explanation of why the EXACT Best Move provided in the context is superior to the User Move." : "Explicación de por qué el Best Move EXACTO provisto en el contexto es superior a la jugada del usuario."}"
   }
 }`;
 }
-
 /**
  * Sanitizes LLM output to ensure variations don't end with incomplete moves or trailing move numbers.
  */
 function sanitizeLLMOutput(text) {
     if (!text) return text;
-    
-    // Remove incomplete moves at the end of variation blocks
-    // Matches trailing move numbers like "7. " or "7... " or "7. ♘ "
     return text.replace(/<div class="variation">(.*?)<\/div>/gs, (match, content) => {
         let cleaned = content.trim();
         
@@ -281,82 +287,104 @@ function sanitizeLLMOutput(text) {
 }
 
 async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs = 200, userMove, classification) {
+    console.log(`[API] Analysis Request: FEN=${fen.substring(0,10)}..., Model=${modelOverride}, Lang=${language}, Move=${userMove}, Class=${classification}`);
     const fenId = getFenId(fen);
     
-    // 1. Cache Resolution Profiling
-    const startCache = performance.now();
+    // 1. Definimos primero la variable del modelo (¡Esto arregla el ReferenceError!)
     const model = modelOverride || 'qwen2.5:14b';
+    
+    // 2. Ahora sí, el chequeo del Cache tiene acceso a la variable 'model'
     const cached = getCachedAnalysis(fen, model, language);
-    if (cached) {
-        const cacheDuration = (performance.now() - startCache).toFixed(1);
-        console.log(`[Perf: Cache] [${fenId}] Resolved from cache in ${cacheDuration}ms`);
-        if (cached.score !== undefined && cached.bestScore === undefined) {
-            cached.bestScore = cached.score;
-        }
-        return cached;
-    }
+    if (cached) return cached;
 
-    // 2. Stockfish Profiling
-    // Evaluation 1: Position BEFORE user move (to find the true Best Move)
-    const evaluation = await pool.addRequest(fen, moveTimeMs);
-    const bestScore = evaluation.score;
-    const sanBestMove = uciToSan(fen, evaluation.bestmove);
-    const sanPv = evaluation.pv ? uciToSan(fen, evaluation.pv) : 'N/A';
-
-    // Evaluation 2: Position AFTER user move (to find Actual Score and CP Loss)
+    // Preparar tablero post-move para calcular la refutación en paralelo
     const chess = new Chess(fen);
     const moveNumber = Math.floor(chess.moveNumber());
     const prefix = chess.turn() === 'w' ? `${moveNumber}. ` : `${moveNumber}... `;
 
-    // Prepare userMove with transparent icons for Ollama prompt
+    // CONFIGURACIÓN DINÁMICA DE PROFUNDIDAD
+    // Si la jugada es <= 10, forzamos profundidad 22 para un análisis de apertura impecable.
+    // En adelante, mantenemos el moveTimeMs (ej. 200ms o lo que venga del cliente) para no saturar.
+    let stockfishOptions = { moveTimeMs: moveTimeMs || 200, depth: null };
+    if (moveNumber <= 10) {
+        stockfishOptions = { depth: 22 }; 
+        console.log(`[Engine] Apertura detectada (Jugada ${moveNumber}). Forzando profundidad 22.`);
+    }
+    
+    let tempChessFen = null;
+    try {
+        const tempChess = new Chess(fen);
+        if (userMove) {
+            const m = tempChess.move(userMove);
+            if (m) tempChessFen = tempChess.fen();
+        }
+    } catch(e) {
+        console.error("Invalid user move for FEN setup", e);
+    }
+
+    // Lanzamos ambas peticiones al Pool pasando el objeto stockfishOptions
+    const stockfishPromises = [
+        pool.addRequest(fen, stockfishOptions)
+    ];
+    
+    if (tempChessFen) {
+        stockfishPromises.push(pool.addRequest(tempChessFen, stockfishOptions));
+    }
+
+    // Esperamos las respuestas de Stockfish en paralelo
+    const stockfishResults = await Promise.all(stockfishPromises);
+    
+    const evaluation = stockfishResults[0];
+    const postMoveEvaluation = stockfishResults[1] || null; // Manejo por si no hubo jugada del usuario
+
+    const bestScore = evaluation.score;
+    const sanBestMove = uciToSan(fen, evaluation.bestmove);
+    const sanPv = evaluation.pv ? uciToSan(fen, evaluation.pv) : 'N/A';
+
     let sanUserMove = 'N/A';
     if (userMove) {
         const unicodeMapping = { 'N': '♘', 'B': '♗', 'R': '♖', 'Q': '♕', 'K': '♔' };
         let san = userMove;
-        if (unicodeMapping[san[0]]) {
-            san = unicodeMapping[san[0]] + san.substring(1);
-        }
+        if (unicodeMapping[san[0]]) san = unicodeMapping[san[0]] + san.substring(1);
         sanUserMove = `${prefix}${san}`;
     }
-    
+
     let actualScore = bestScore;
-    let sanRefutationLine = 'N/A'; // <-- NUEVA VARIABLE
+    let sanRefutationLine = 'N/A';
 
-    try {
-        const tempChess = new Chess(fen);
-        const m = tempChess.move(userMove);
-        if (m) {
-            const postMoveEvaluation = await pool.addRequest(tempChess.fen(), moveTimeMs);
-            // Flip score for comparison if it's black's turn to keep it relative to white or absolute
-            actualScore = postMoveEvaluation.score;
-            
-            // <-- NUEVA LÓGICA: Traducir la línea que refuta el error
-            if (postMoveEvaluation.pv) {
-                sanRefutationLine = uciToSan(tempChess.fen(), postMoveEvaluation.pv);
-                // Le añadimos la jugada del usuario al inicio para que tenga contexto
-                sanRefutationLine = `${sanUserMove} ${sanRefutationLine}`; 
-            }
+    if (postMoveEvaluation) {
+        actualScore = -postMoveEvaluation.score; 
+        if (postMoveEvaluation.pv) {
+            sanRefutationLine = uciToSan(tempChessFen, postMoveEvaluation.pv);
+            // Le añadimos la jugada del usuario al inicio para que tenga contexto
+            sanRefutationLine = `${sanUserMove} ${sanRefutationLine}`; 
         }
-    } catch (e) {
-        console.error("Error evaluating post-move position:", e);
     }
 
-    const cpLoss = Math.abs(bestScore - actualScore);
-
-    // Bug 2: Correct Spanish classification mapping
-    let mappedClassification = classification || "imprecisión";
-    if (language === 'es') {
-        if (cpLoss >= 300) mappedClassification = "error grave";
-        else if (cpLoss >= 100) mappedClassification = "error";
-        else mappedClassification = "imprecisión";
-    } else {
-        if (cpLoss >= 300) mappedClassification = "blunder";
-        else if (cpLoss >= 100) mappedClassification = "mistake";
-        else mappedClassification = "inaccuracy";
+    const cpLoss = Math.max(0, bestScore - actualScore);
+    
+    // ¡NUEVA LÓGICA DE CLASIFICACIÓN! (Para incluir jugadas buenas)
+    let mappedClassification = classification;
+    if (!mappedClassification) {
+        if (language === 'es') {
+            if (cpLoss >= 300) mappedClassification = "error grave";
+            else if (cpLoss >= 100) mappedClassification = "error";
+            else if (cpLoss >= 50) mappedClassification = "imprecisión";
+            else if (cpLoss >= 20) mappedClassification = "buena jugada";
+            else mappedClassification = "jugada excelente"; // Si cpLoss es casi 0
+        } else {
+            if (cpLoss >= 300) mappedClassification = "blunder";
+            else if (cpLoss >= 100) mappedClassification = "mistake";
+            else if (cpLoss >= 50) mappedClassification = "inaccuracy";
+            else if (cpLoss >= 20) mappedClassification = "good move";
+            else mappedClassification = "excellent move";
+        }
     }
     
-    const systemPrompt = getSystemPrompt(language);
-    
+    // chess.turn() devuelve 'w' o 'b' del FEN original (antes del movimiento del usuario)
+    const playerColorCode = chess.turn(); 
+    const systemPrompt = getSystemPrompt(language, playerColorCode);
+
     const userPrompt = `User Move: ${sanUserMove}
     Classification: ${mappedClassification}
     Evaluation: ${cpLoss}
@@ -376,10 +404,9 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
             prompt: fullPrompt,
             format: 'json', // <--- CRÍTICO: Fuerza a Ollama a devolver un JSON puro
             options: { 
-                temperature: 0.2, // Un poco de temperatura para mejorar la redacción
+                temperature: 0.0, // Un poco de temperatura para mejorar la redacción
                 num_predict: 512, // Reducido: el JSON es mucho más corto que el HTML
                 num_ctx: 4096,
-                think: false
             }
         });
 
@@ -494,7 +521,9 @@ app.post('/api/evaluate-all', async (req, res) => {
 
   const results = await Promise.all(fens.map(async (fen) => {
     try {
-      const evaluation = await pool.addRequest(fen, moveTime);
+      const evaluation = await pool.addRequest(fen, { moveTimeMs: moveTime || 200, depth: null });
+      // Cache the raw stockfish evaluation
+      setCachedAnalysis(fen, 'stockfish', evaluation, 'en'); 
       return { fen, ...evaluation };
     } catch (err) {
       return { fen, error: err.message };

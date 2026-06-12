@@ -266,9 +266,8 @@ function App() {
             body: JSON.stringify({ 
                 fen: prevFen, 
                 model: selectedModel, 
-                language,
-                userMove: userMove,
-                classification: 'good'
+                language: language,
+                userMove: userMove
             })
         });
         const data = await res.json();

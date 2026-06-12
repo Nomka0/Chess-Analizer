@@ -70,7 +70,7 @@ code, pre, .mono {
 .clickable-move {
     background-color: #1e293b;
     color: #38bdf8;
-    padding: 2px 6px;
+    padding: 2px 8px; /* Increased padding slightly */
     border-radius: 4px;
     cursor: pointer;
     display: inline-flex;
@@ -82,11 +82,36 @@ code, pre, .mono {
     font-weight: 600;
     margin: 2px 3px;
     vertical-align: middle;
+    gap: 2px; /* Add gap for icons */
 }
 
 .clickable-move:hover {
     background-color: #38bdf8;
     color: #0f172a;
     border-color: #38bdf8;
+}
+
+.chess-piece-icon {
+    font-family: 'Noto Sans Symbols', sans-serif;
+    font-size: 1.2em; /* Slightly larger for better visibility */
+    line-height: 1;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    opacity: 1;
+    color: inherit;
+    margin-right: 1px;
+}
+
+.variation {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 4px;
+    padding: 12px;
+    background: rgba(15, 23, 42, 0.4);
+    border-radius: 8px;
+    border: 1px solid rgba(51, 65, 85, 0.5);
+    margin: 12px 0;
+    line-height: 1.8;
 }
 
