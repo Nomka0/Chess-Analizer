@@ -118,7 +118,7 @@ class StockfishWorker {
     this.pv = '';
   }
 
-  async evaluate(fen, options = { moveTimeMs: 200, depth: null }) {
+  async evaluate(fen, options = { depth: 22 }) {
     this.isBusy = true;
     this.buffer = ''; // Limpiar el buffer antes de iniciar una lectura nueva
 
@@ -128,19 +128,16 @@ class StockfishWorker {
 
       this.engine.stdin.write(`position fen ${fen}\n`);
       
-      // Si se especifica profundidad, usamos depth. Si no, caemos en movetime.
-      if (options.depth) {
-        this.engine.stdin.write(`go depth ${options.depth}\n`);
-      } else {
-        this.engine.stdin.write(`go movetime ${options.moveTimeMs}\n`); 
-      }
+      // Priorizamos profundidad 22 por defecto
+      const depth = options.depth || 22;
+      this.engine.stdin.write(`go depth ${depth}\n`);
 
-      // Ajustamos el timeout de seguridad dinámicamente
-      const timeoutDuration = options.depth ? 8000 : (options.moveTimeMs + 2000);
+      // Timeout de seguridad MUY generoso (30 segundos) para evitar cortes prematuros
+      const timeoutDuration = 30000;
 
       setTimeout(() => {
         if (this.currentResolve === resolve) {
-          console.warn(`[Stockfish ${this.id}] Timeout de emergencia disparado para FEN: ${fen.substring(0,15)}`);
+          console.warn(`[Stockfish ${this.id}] Timeout de emergencia (30s) disparado para FEN: ${fen.substring(0,15)}`);
           this.cleanup();
           reject(new Error(`Stockfish ${this.id} evaluation timed out`));
         }
@@ -302,14 +299,9 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
     const moveNumber = Math.floor(chess.moveNumber());
     const prefix = chess.turn() === 'w' ? `${moveNumber}. ` : `${moveNumber}... `;
 
-    // CONFIGURACIÓN DINÁMICA DE PROFUNDIDAD
-    // Si la jugada es <= 10, forzamos profundidad 22 para un análisis de apertura impecable.
-    // En adelante, mantenemos el moveTimeMs (ej. 200ms o lo que venga del cliente) para no saturar.
-    let stockfishOptions = { moveTimeMs: moveTimeMs || 200, depth: null };
-    if (moveNumber <= 10) {
-        stockfishOptions = { depth: 22 }; 
-        console.log(`[Engine] Apertura detectada (Jugada ${moveNumber}). Forzando profundidad 22.`);
-    }
+    // CONFIGURACIÓN DE MOTOR: Forzamos profundidad 22 para máxima precisión
+    let stockfishOptions = { depth: 22 }; 
+    console.log(`[Engine] Iniciando análisis a profundidad 22.`);
     
     let tempChessFen = null;
     try {
@@ -516,12 +508,12 @@ app.post('/api/analyze', async (req, res) => {
 
 app.post('/api/evaluate-all', async (req, res) => {
   const startApi = performance.now();
-  const { fens, moveTime } = req.body;
+  const { fens } = req.body;
   if (!fens || !Array.isArray(fens)) return res.status(400).json({ error: "Missing FENs" });
 
   const results = await Promise.all(fens.map(async (fen) => {
     try {
-      const evaluation = await pool.addRequest(fen, { moveTimeMs: moveTime || 200, depth: null });
+      const evaluation = await pool.addRequest(fen, { depth: 22 });
       // Cache the raw stockfish evaluation
       setCachedAnalysis(fen, 'stockfish', evaluation, 'en'); 
       return { fen, ...evaluation };

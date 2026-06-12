@@ -1,6 +1,6 @@
 import { Award, Plus, Upload, Check, Copy, Languages, Activity, Sparkles } from 'lucide-react';
 
-const Header = ({ t, setShowImportModal, handleCopyFen, copied, language, setLanguage, selectedModel, setSelectedModel, models, handleAnalyzeAllPgn, isLoading }) => {
+const Header = ({ t, setShowImportModal, handleCopyFen, copied, language, setLanguage, selectedModel, setSelectedModel, models, handleAnalyzeAllPgn, isLoading, userColor, setUserColor }) => {
   return (
     <header className="flex justify-between items-center px-6 py-3 border-b border-slate-800 bg-[#161b22] z-20 shadow-xl relative">
       <div className="flex items-center gap-6">
@@ -23,6 +23,31 @@ const Header = ({ t, setShowImportModal, handleCopyFen, copied, language, setLan
       </div>
 
       <div className="flex gap-4 items-center">
+          <div className="flex bg-slate-900 rounded-lg p-1 border border-slate-800 shadow-inner">
+            <button 
+                onClick={() => setUserColor('white')} 
+                className={`px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-tighter transition-all duration-200 flex items-center gap-1.5 ${
+                    userColor === 'white' 
+                    ? 'bg-white text-slate-950 shadow-md transform scale-105' 
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+            >
+                <div className={`w-2 h-2 rounded-full border border-slate-400 ${userColor === 'white' ? 'bg-slate-100' : 'bg-slate-400 opacity-50'}`} />
+                {language === 'en' ? 'White' : 'Blancas'}
+            </button>
+            <button 
+                onClick={() => setUserColor('black')} 
+                className={`px-3 py-1 rounded-md text-[10px] font-black uppercase tracking-tighter transition-all duration-200 flex items-center gap-1.5 ${
+                    userColor === 'black' 
+                    ? 'bg-slate-700 text-white shadow-md transform scale-105' 
+                    : 'text-slate-500 hover:text-slate-300'
+                }`}
+            >
+                <div className={`w-2 h-2 rounded-full border border-slate-400 ${userColor === 'black' ? 'bg-slate-900' : 'bg-slate-900 opacity-50'}`} />
+                {language === 'en' ? 'Black' : 'Negras'}
+            </button>
+          </div>
+
           <button 
               onClick={() => setLanguage(language === 'en' ? 'es' : 'en')} 
               className="bg-slate-800 hover:bg-slate-700 p-2 rounded transition flex items-center gap-2 text-[10px] font-bold uppercase"

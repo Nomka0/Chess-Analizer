@@ -112,6 +112,7 @@ function App() {
   const [language, setLanguage] = useState('es'); 
   
   const [accuracy, setAccuracy] = useState({ white: 0, black: 0 });
+  const [userColor, setUserColor] = useState('white'); // 'white' or 'black'
   const [isLoading, setIsLoading] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [batchAnalysisResults, setBatchAnalysisResults] = useState({});
@@ -253,11 +254,19 @@ function App() {
   const handleAnalyzeMove = useCallback(async (index, specificHistory) => {
     const activeHistory = specificHistory || historyRef.current;
     if (index < 0 || index >= activeHistory.length) return;
-    const targetFen = activeHistory[index].after;
+    
+    // Check if it's the user's turn to analyze
+    const move = activeHistory[index];
+    const isWhiteMove = index % 2 === 0;
+    const moveColor = isWhiteMove ? 'white' : 'black';
+    
+    if (moveColor !== userColor) return;
+
+    const targetFen = move.after;
     if (resultsRef.current[targetFen] && resultsRef.current[targetFen].analysis) return;
 
-    const prevFen = activeHistory[index].before;
-    const userMove = activeHistory[index].san;
+    const prevFen = move.before;
+    const userMove = move.san;
 
     try {
         const res = await fetch('http://localhost:3000/api/analyze', {
@@ -267,13 +276,14 @@ function App() {
                 fen: prevFen, 
                 model: selectedModel, 
                 language: language,
-                userMove: userMove
+                userMove: userMove,
+                playerColor: userColor === 'white' ? 'w' : 'b'
             })
         });
         const data = await res.json();
         setBatchAnalysisResults(prev => ({ ...prev, [targetFen]: data }));
     } catch (e) { console.error(e); }
-  }, [selectedModel, language]);
+  }, [selectedModel, language, userColor]);
 
   const navigateHistory = useCallback((target, isRelative = false, isAlt = isAltBoardActive) => {
     setPreviewGame(null);
@@ -412,21 +422,37 @@ function App() {
     }
   }, [isAltBoardActive, altHistoryIndex, historyIndex, syncGame, handleAnalyzeMove]);
 
+  const onDropRef = useRef(null);
   useEffect(() => {
-    if (boardRef.current) {
-      if (!cg.current) {
-        cg.current = Chessground(boardRef.current, {
-          fen: currentFen,
-          orientation: boardOrientation,
-          movable: { free: false },
-          events: { move: (from, to) => onDrop(from, to) }
-        });
-      } else {
-        cg.current.set({ fen: currentFen, orientation: boardOrientation });
-      }
+    onDropRef.current = onDrop;
+  }, [onDrop]);
+
+  useEffect(() => {
+    if (boardRef.current && !cg.current) {
+      cg.current = Chessground(boardRef.current, {
+        fen: currentFen,
+        orientation: boardOrientation,
+        movable: { free: false },
+        animation: { enabled: true, duration: 250 },
+        events: { move: (from, to) => onDropRef.current?.(from, to) }
+      });
     }
-    return () => { if (cg.current) cg.current.destroy(); cg.current = null; };
-  }, [currentFen, boardOrientation, onDrop]);
+    return () => {
+      if (cg.current) {
+        cg.current.destroy();
+        cg.current = null;
+      }
+    };
+  }, [boardOrientation]); // Only re-initialize if orientation changes
+
+  useEffect(() => {
+    if (cg.current) {
+      cg.current.set({ 
+        fen: currentFen,
+        animation: { enabled: true, duration: 250 }
+      });
+    }
+  }, [currentFen]); // Update FEN separately to allow animation
 
   function handleFlip() {
     setBoardOrientation(prev => prev === 'white' ? 'black' : 'white');
@@ -529,19 +555,27 @@ function App() {
             classification,
             index: idx + 1,
             impact,
-            movingPlayer
+            movingPlayer,
+            playerColor: userColor === 'white' ? 'w' : 'b'
         };
     });
 
     setBatchAnalysisResults({ ...currentResults });
 
     const errorClasses = ['inaccuracy', 'mistake', 'blunder'];
-    const earlyErrors = streamPayload
+    
+    // Filter streamPayload to ONLY include moves from userColor
+    const filteredByColor = streamPayload.filter(m => {
+        const moveColor = m.movingPlayer === 'w' ? 'white' : 'black';
+        return moveColor === userColor;
+    });
+
+    const earlyErrors = filteredByColor
         .filter(m => errorClasses.includes(m.classification))
         .slice(0, 2);
 
     const earlyErrorIndices = new Set(earlyErrors.map(m => m.index));
-    const remainingPool = streamPayload.filter(m => !earlyErrorIndices.has(m.index));
+    const remainingPool = filteredByColor.filter(m => !earlyErrorIndices.has(m.index));
 
     const criticalMoves = remainingPool
         .sort((a, b) => b.impact - a.impact)
@@ -702,6 +736,8 @@ function App() {
         models={models}
         handleAnalyzeAllPgn={handleAnalyzeAllPgn}
         isLoading={isLoading}
+        userColor={userColor}
+        setUserColor={setUserColor}
       />
 
       {isLoading && (
