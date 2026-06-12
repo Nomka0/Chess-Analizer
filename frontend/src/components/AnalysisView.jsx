@@ -4,7 +4,7 @@ import rehypeRaw from 'rehype-raw';
 import { Sparkles } from 'lucide-react';
 import { formatAIAnalysisText } from '../utils'; // <-- Asegúrate de que la ruta sea correcta
 
-const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveClick, activeHistoryIndex, isAltBoardActive }) => {
+const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveClick, activeHistoryIndex, isAltBoardActive, onAnalyzeMove, isLoading }) => {
   const containerRef = useRef(null);
 
   // Parseamos el texto solo cuando cambia el análisis o el índice actual
@@ -112,9 +112,20 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveC
             </div>
           </div>
         ) : (
-          <div className="h-full flex flex-col items-center justify-center text-center opacity-20 px-6 grayscale">
-              <Sparkles className="w-12 h-10 mb-4 text-indigo-400" />
-              <p className="text-[10px] font-black uppercase tracking-[0.2em] leading-relaxed">{t.intelligenceReady} <br/> {t.loadMatch}</p>
+          <div className="h-full flex flex-col items-center justify-center text-center px-6">
+              <Sparkles className={`w-12 h-10 mb-4 ${isLoading ? 'text-violet-500 animate-pulse' : 'text-indigo-400 opacity-20'}`} />
+              <p className="text-[10px] font-black uppercase tracking-[0.2em] leading-relaxed opacity-20 mb-6">
+                {isLoading ? t.analyzing : t.intelligenceReady} <br/> {t.loadMatch}
+              </p>
+              
+              {activeHistoryIndex >= 0 && !isLoading && (
+                <button 
+                  onClick={() => onAnalyzeMove(activeHistoryIndex)}
+                  className="bg-violet-600 hover:bg-violet-500 text-white px-6 py-2 rounded-lg text-xs font-black uppercase tracking-widest transition-all shadow-lg shadow-violet-900/20 active:scale-95"
+                >
+                  {t.startAnalysis}
+                </button>
+              )}
           </div>
         )}
       </div>

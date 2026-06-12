@@ -49,6 +49,7 @@ const translations = {
     noAnalysis: "Sin análisis para esta posición.",
     suggested: "Suggested",
     intelligenceReady: "Intelligence Ready",
+    startAnalysis: "Start Analysis",
     loadMatch: "Load match to analyze",
     best: "best",
     excellent: "excellent",
@@ -76,6 +77,7 @@ const translations = {
     noAnalysis: "Sin análisis para esta posición.",
     suggested: "Sugerido",
     intelligenceReady: "IA Lista",
+    startAnalysis: "Iniciar Análisis",
     loadMatch: "Carga una partida para analizar",
     best: "mejor",
     excellent: "excelente",
@@ -268,6 +270,7 @@ function App() {
     const prevFen = move.before;
     const userMove = move.san;
 
+    setIsLoading(true);
     try {
         const res = await fetch('http://localhost:3000/api/analyze', {
             method: 'POST',
@@ -283,6 +286,7 @@ function App() {
         const data = await res.json();
         setBatchAnalysisResults(prev => ({ ...prev, [targetFen]: data }));
     } catch (e) { console.error(e); }
+    finally { setIsLoading(false); }
   }, [selectedModel, language, userColor]);
 
   const navigateHistory = useCallback((target, isRelative = false, isAlt = isAltBoardActive) => {
@@ -311,9 +315,7 @@ function App() {
 
     setGState(tempGame);
     setHIdx(newIndex);
-
-    if (!isAlt && newIndex >= 0) handleAnalyzeMove(newIndex);
-  }, [isAltBoardActive, altHistoryIndex, historyIndex, handleAnalyzeMove]);
+  }, [isAltBoardActive, altHistoryIndex, historyIndex]);
 
   const stopResizing = useCallback(() => {
     isResizingH.current = false;
@@ -447,12 +449,30 @@ function App() {
 
   useEffect(() => {
     if (cg.current) {
+      const shapes = [];
+      
+      // Calculate arrow from Stockfish's best move
+      if (currentAnalysis && currentAnalysis.uciBestMove) {
+        const uci = currentAnalysis.uciBestMove;
+        if (uci.length >= 4) {
+          const orig = uci.substring(0, 2);
+          const dest = uci.substring(2, 4);
+          shapes.push({
+            orig,
+            dest,
+            brush: 'green', // Distinct color for engine suggestions
+            modifiers: { lineWidth: 10 }
+          });
+        }
+      }
+
       cg.current.set({ 
         fen: currentFen,
+        drawable: { shapes },
         animation: { enabled: true, duration: 250 }
       });
     }
-  }, [currentFen]); // Update FEN separately to allow animation
+  }, [currentFen, currentAnalysis]); // Re-run when FEN or Analysis (with UCI) changes
 
   function handleFlip() {
     setBoardOrientation(prev => prev === 'white' ? 'black' : 'white');
@@ -505,7 +525,8 @@ function App() {
                 const fen = chunk[idx].fen;
                 allEvals[fen] = {
                     score: ev.score,
-                    bestmove: ev.bestmove
+                    bestmove: ev.bestmove,
+                    uciBestMove: ev.bestmove
                 };
                 
                 if (i + idx > 0) {
@@ -515,12 +536,14 @@ function App() {
                     const uiScore = currentGame.turn() === 'b' ? -(ev.score || 0) : (ev.score || 0);
                     
                     const suggestedMoveFromPrev = allEvals[prevPos.fen]?.bestmove || '...';
+                    const uciBestMoveFromPrev = allEvals[prevPos.fen]?.uciBestMove;
 
                     currentResults[pos.fen] = {
                         score: uiScore,
                         classification: '...', 
                         analysis: 'Analizando con IA...',
-                        bestmove: suggestedMoveFromPrev
+                        bestmove: suggestedMoveFromPrev,
+                        uciBestMove: uciBestMoveFromPrev
                     };
                 }
             });
@@ -841,6 +864,8 @@ function App() {
                 onVariationMoveClick={onVariationMoveClick}
                 activeHistoryIndex={activeHistoryIndex}
                 isAltBoardActive={isAltBoardActive}
+                onAnalyzeMove={handleAnalyzeMove}
+                isLoading={isLoading}
               />
               
               <div onMouseDown={startResizingV} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10 h-full" />

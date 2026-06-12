@@ -4,9 +4,16 @@ import { spawn } from 'child_process';
 import { Ollama } from 'ollama';
 const ollama = new Ollama({ host: 'http://127.0.0.1:11434' });
 import { performance } from 'perf_hooks';
-import { getCachedAnalysis, setCachedAnalysis } from './cache.js';
+import { getCachedAnalysis, setCachedAnalysis, getCachedEngine, setCachedEngine } from './cache.js';
 import { Chess } from 'chess.js';
 import { formatChessText } from './utils.js';
+import dns from 'dns';
+import https from 'https';
+
+// Force IPv4 first to avoid AggregateError/fetch failed on systems with broken IPv6
+if (dns.setDefaultResultOrder) {
+  dns.setDefaultResultOrder('ipv4first');
+}
 
 const app = express();
 app.use(cors());
@@ -283,6 +290,221 @@ function sanitizeLLMOutput(text) {
     });
 }
 
+async function getLichessCloudEval(fen) {
+    const fenId = getFenId(fen);
+    try {
+        // Lichess requires a full FEN
+        let fullFen = fen;
+        try {
+            const check = new Chess(fen);
+            fullFen = check.fen();
+        } catch (e) {
+            return null; // Invalid FEN
+        }
+
+        const url = `https://lichess.org/api/cloud-eval?fen=${encodeURIComponent(fullFen)}`;
+        console.log(`[Lichess] Requesting eval for [${fenId}...]`);
+        
+        const options = {
+            headers: {
+                'User-Agent': 'Chess-Analyzer-Pro/1.0',
+                'Accept': 'application/json'
+            },
+            timeout: 5000,
+            // Force IPv4 at the socket level to resolve 'socket hang up' / 'fetch failed'
+            family: 4 
+        };
+
+        return new Promise((resolve) => {
+            const req = https.get(url, options, (res) => {
+                console.log(`[Lichess] Response status: ${res.statusCode} for [${fenId}...]`);
+                if (res.statusCode !== 200) {
+                    res.resume(); // Consume response data to free up memory
+                    return resolve(null);
+                }
+
+                let body = '';
+                res.on('data', (chunk) => { body += chunk; });
+                res.on('end', () => {
+                    try {
+                        const data = JSON.parse(body);
+                        if (data.pvs && data.pvs.length > 0) {
+                            const bestMove = data.pvs[0].moves.split(' ')[0];
+                            console.log(`[Lichess] Found bestmove: ${bestMove} for [${fenId}...]`);
+                            resolve({
+                                bestmove: bestMove,
+                                score: data.pvs[0].cp ?? (data.pvs[0].mate * 100),
+                                scoreType: data.pvs[0].cp !== undefined ? 'cp' : 'mate',
+                                pv: data.pvs[0].moves,
+                                source: 'lichess'
+                            });
+                        } else {
+                            console.log(`[Lichess] No PVS found for [${fenId}...]`);
+                            resolve(null);
+                        }
+                    } catch (e) {
+                        console.error(`[Lichess] JSON Parse Error: ${e.message}`);
+                        resolve(null);
+                    }
+                });
+            });
+
+            req.on('error', (e) => {
+                console.error(`[Lichess] Request error: ${e.message}`);
+                resolve(null);
+            });
+
+            req.on('timeout', () => {
+                console.warn(`[Lichess] Request timeout for [${fenId}...]`);
+                req.destroy();
+                resolve(null);
+            });
+        });
+
+    } catch (e) {
+        console.error(`[Lichess] Unexpected error: ${e.message}`);
+        return null;
+    }
+}
+
+async function getChessApiEval(fen) {
+    return new Promise((resolve) => {
+        try {
+            const body = JSON.stringify({ fen });
+            const options = {
+                method: 'POST',
+                hostname: 'chess-api.com',
+                path: '/v1',
+                headers: {
+                    'Content-Type': 'application/json',
+                    'Content-Length': body.length,
+                    'User-Agent': 'Chess-Analyzer-Pro/1.0'
+                },
+                timeout: 3000,
+                family: 4
+            };
+
+            const req = https.request(options, (res) => {
+                let bodyRes = '';
+                res.on('data', (chunk) => { bodyRes += chunk; });
+                res.on('end', () => {
+                    if (res.statusCode === 200) {
+                        try {
+                            const data = JSON.parse(bodyRes);
+                            if (data.move) {
+                                console.log(`[ChessApi] Found bestmove: ${data.move}`);
+                                return resolve({
+                                    bestmove: data.move,
+                                    score: parseInt(data.centipawns) ?? 0,
+                                    scoreType: 'cp',
+                                    source: 'chess-api'
+                                });
+                            }
+                        } catch (e) {}
+                    }
+                    resolve(null);
+                });
+            });
+
+            req.on('error', (e) => {
+                console.warn(`[ChessApi] Skipped: ${e.message}`);
+                resolve(null);
+            });
+
+            req.write(body);
+            req.end();
+        } catch (e) {
+            resolve(null);
+        }
+    });
+}
+
+async function getLichessMastersEval(fen) {
+    return new Promise((resolve) => {
+        const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}`;
+        const options = {
+            timeout: 3000,
+            family: 4
+        };
+
+        const req = https.get(url, options, (res) => {
+            let body = '';
+            res.on('data', (chunk) => { body += chunk; });
+            res.on('end', () => {
+                if (res.statusCode === 200) {
+                    try {
+                        const data = JSON.parse(body);
+                        if (data.moves && data.moves.length > 0) {
+                            const bestMove = data.moves[0].uci;
+                            console.log(`[LichessMasters] Found bestmove: ${bestMove}`);
+                            return resolve({
+                                bestmove: bestMove,
+                                score: 0,
+                                scoreType: 'cp',
+                                source: 'lichess-masters'
+                            });
+                        }
+                    } catch (e) {}
+                }
+                resolve(null);
+            });
+        });
+
+        req.on('error', (e) => {
+            console.warn(`[LichessMasters] Skipped: ${e.message}`);
+            resolve(null);
+        });
+        
+        req.on('timeout', () => { req.destroy(); resolve(null); });
+    });
+}
+
+async function getEngineEvaluation(fen, options) {
+    const fenId = getFenId(fen);
+    
+    // Level 1: Local JSON Cache
+    const cached = getCachedEngine(fen);
+    if (cached) {
+        console.log(`[Engine] Cache Hit for [${fenId}...]`);
+        return { ...cached, source: 'cache' };
+    }
+
+    // Level 2: Lichess Cloud Eval
+    console.log(`[Engine] Trying Lichess Cloud for [${fenId}...]`);
+    const lichess = await getLichessCloudEval(fen);
+    if (lichess) {
+        console.log(`[Engine] Lichess Cloud Hit for [${fenId}...]`);
+        setCachedEngine(fen, lichess);
+        return lichess;
+    }
+
+    // Level 3: Chess-API
+    console.log(`[Engine] Trying Chess-API for [${fenId}...]`);
+    const chessApi = await getChessApiEval(fen);
+    if (chessApi) {
+        console.log(`[Engine] Chess-API Hit for [${fenId}...]`);
+        setCachedEngine(fen, chessApi);
+        return chessApi;
+    }
+
+    // Level 4: Lichess Masters
+    console.log(`[Engine] Trying Lichess Masters for [${fenId}...]`);
+    const masters = await getLichessMastersEval(fen);
+    if (masters) {
+        console.log(`[Engine] Lichess Masters Hit for [${fenId}...]`);
+        setCachedEngine(fen, masters);
+        return masters;
+    }
+
+    // Level 5: Local Stockfish
+    console.log(`[Engine] Stockfish fallback for [${fenId}...]`);
+    const local = await pool.addRequest(fen, options);
+    console.log(`[Engine] Stockfish result received for [${fenId}...]`);
+    const result = { ...local, source: 'stockfish' };
+    setCachedEngine(fen, result);
+    return result;
+}
+
 async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs = 200, userMove, classification) {
     console.log(`[API] Analysis Request: FEN=${fen.substring(0,10)}..., Model=${modelOverride}, Lang=${language}, Move=${userMove}, Class=${classification}`);
     const fenId = getFenId(fen);
@@ -316,15 +538,17 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
 
     // Lanzamos ambas peticiones al Pool pasando el objeto stockfishOptions
     const stockfishPromises = [
-        pool.addRequest(fen, stockfishOptions)
+        getEngineEvaluation(fen, stockfishOptions)
     ];
     
     if (tempChessFen) {
-        stockfishPromises.push(pool.addRequest(tempChessFen, stockfishOptions));
+        stockfishPromises.push(getEngineEvaluation(tempChessFen, stockfishOptions));
     }
 
     // Esperamos las respuestas de Stockfish en paralelo
+    console.log(`[PerformAnalysis] Waiting for engine results for [${fenId}...]`);
     const stockfishResults = await Promise.all(stockfishPromises);
+    console.log(`[PerformAnalysis] Engine results received for [${fenId}...]`);
     
     const evaluation = stockfishResults[0];
     const postMoveEvaluation = stockfishResults[1] || null; // Manejo por si no hubo jugada del usuario
@@ -446,6 +670,7 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
 
         const result = {
             fen,
+            uciBestMove: evaluation.bestmove,
             bestmove: formatChessText(sanBestMove),
             score: actualScore,
             bestScore: bestScore,
@@ -513,9 +738,7 @@ app.post('/api/evaluate-all', async (req, res) => {
 
   const results = await Promise.all(fens.map(async (fen) => {
     try {
-      const evaluation = await pool.addRequest(fen, { depth: 22 });
-      // Cache the raw stockfish evaluation
-      setCachedAnalysis(fen, 'stockfish', evaluation, 'en'); 
+      const evaluation = await getEngineEvaluation(fen, { depth: 22 });
       return { fen, ...evaluation };
     } catch (err) {
       return { fen, error: err.message };
