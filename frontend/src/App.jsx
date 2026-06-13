@@ -481,10 +481,11 @@ function App() {
             modifiers: { lineWidth: 10 }
           });
           
-          // Add red arrow for user's move when it differs from Stockfish (always visible when user move exists and differs)
-          if (userMove && userMove.uci && userMove.uci !== uci) {
-            const userOrig = userMove.uci.substring(0, 2);
-            const userDest = userMove.uci.substring(2, 4);
+          // Add red arrow for user's move ONLY when it is a blunder or mistake
+          const isBadMove = currentAnalysis.classification === 'blunder' || currentAnalysis.classification === 'mistake';
+          if (userMove && isBadMove) {
+            const userOrig = userMove.from;
+            const userDest = userMove.to;
             shapes.push({
               orig: userOrig,
               dest: userDest,
