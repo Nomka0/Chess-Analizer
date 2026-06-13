@@ -1,3 +1,4 @@
+backend/server.js
 import express from 'express';
 import cors from 'cors';
 import { spawn } from 'child_process';
@@ -505,6 +506,45 @@ async function getEngineEvaluation(fen, options) {
     return result;
 }
 
+// Win probability from centipawns (standard logistic curve)
+function centipawnsToWinProb(cp) {
+    return 1 / (1 + Math.pow(10, -cp / 400));
+}
+
+// Classification based on win probability impact (percentage points)
+// Aligns with frontend getClassification logic
+function classifyMove(cpLoss, language = 'es') {
+    // Convert cpLoss to win probability impact
+    // Assuming typical position around 0cp (50% win prob)
+    // Impact ≈ cpLoss * 0.006 (rough conversion: 100cp ≈ 14% win prob change near 50%)
+    // More accurate: compute actual win prob difference
+    const bestProb = centipawnsToWinProb(0); // 0.5
+    const actualProb = centipawnsToWinProb(-cpLoss); // From perspective of player who lost cp
+    const impact = (bestProb - actualProb) * 100; // Percentage points
+    
+    const isEn = language === 'en';
+    
+    if (cpLoss <= 10) {
+        return isEn ? 'best' : 'mejor';
+    }
+    if (impact < 1.5) {
+        return isEn ? 'best' : 'mejor';
+    }
+    if (impact < 4.0) {
+        return isEn ? 'excellent' : 'excelente';
+    }
+    if (impact < 8.0) {
+        return isEn ? 'good' : 'bueno';
+    }
+    if (impact < 15.0) {
+        return isEn ? 'inaccuracy' : 'imprecisión';
+    }
+    if (impact < 25.0) {
+        return isEn ? 'mistake' : 'error';
+    }
+    return isEn ? 'blunder' : 'grave';
+}
+
 async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs = 200, userMove, classification) {
     console.log(`[API] Analysis Request: FEN=${fen.substring(0,10)}..., Model=${modelOverride}, Lang=${language}, Move=${userMove}, Class=${classification}`);
     const fenId = getFenId(fen);
@@ -579,23 +619,9 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
 
     const cpLoss = Math.max(0, bestScore - actualScore);
     
-    // ¡NUEVA LÓGICA DE CLASIFICACIÓN! (Para incluir jugadas buenas)
-    let mappedClassification = classification;
-    if (!mappedClassification) {
-        if (language === 'es') {
-            if (cpLoss >= 300) mappedClassification = "error grave";
-            else if (cpLoss >= 100) mappedClassification = "error";
-            else if (cpLoss >= 50) mappedClassification = "imprecisión";
-            else if (cpLoss >= 20) mappedClassification = "buena jugada";
-            else mappedClassification = "jugada excelente"; // Si cpLoss es casi 0
-        } else {
-            if (cpLoss >= 300) mappedClassification = "blunder";
-            else if (cpLoss >= 100) mappedClassification = "mistake";
-            else if (cpLoss >= 50) mappedClassification = "inaccuracy";
-            else if (cpLoss >= 20) mappedClassification = "good move";
-            else mappedClassification = "excellent move";
-        }
-    }
+    // ¡NUEVA LÓGICA DE CLASIFICACIÓN! - Use impact-based classification (aligns with frontend)
+    // IGNORE the passed 'classification' parameter as it may be buggy (from frontend)
+    const mappedClassification = classifyMove(cpLoss, language);
     
     // chess.turn() devuelve 'w' o 'b' del FEN original (antes del movimiento del usuario)
     const playerColorCode = chess.turn(); 
@@ -678,7 +704,8 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
             analysis: cleanAnalysis,
             language,
             pv: evaluation.pv,
-            cpLoss
+            cpLoss,
+            classification: mappedClassification
         };
 
         setCachedAnalysis(fen, model, result, language);
@@ -734,114 +761,4 @@ app.post('/api/analyze', async (req, res) => {
 app.post('/api/evaluate-all', async (req, res) => {
   const startApi = performance.now();
   const { fens } = req.body;
-  if (!fens || !Array.isArray(fens)) return res.status(400).json({ error: "Missing FENs" });
-
-  const results = await Promise.all(fens.map(async (fen) => {
-    try {
-      const evaluation = await getEngineEvaluation(fen, { depth: 22 });
-      return { fen, ...evaluation };
-    } catch (err) {
-      return { fen, error: err.message };
-    }
-  }));
-
-  const apiDuration = (performance.now() - startApi).toFixed(1);
-  console.log(`[Perf: API] [Evaluate-All] End-to-End Time: ${apiDuration}ms for ${fens.length} FENs`);
-  res.json(results);
-});
-
-app.post('/api/analyze-all', async (req, res) => {
-  const startApi = performance.now();
-  const { fens, model, language, moveTime } = req.body;
-  if (!fens || !Array.isArray(fens)) return res.status(400).json({ error: "Missing FENs" });
-
-  const results = [];
-  for (const fen of fens) {
-      try {
-          const res = await performAnalysis(fen, model, language || 'es', moveTime);
-          results.push(res);
-      } catch (err) {
-          results.push({ fen, error: err.message });
-      }
-  }
-
-  const apiDuration = (performance.now() - startApi).toFixed(1);
-  console.log(`[Perf: API] [Analyze-All] End-to-End Time: ${apiDuration}ms for ${fens.length} FENs`);
-  res.json(results);
-});
-
-app.get('/api/analyze-stream', async (req, res) => {
-  const { fens: fensRaw, model, language, moveTime } = req.query;
-  if (!fensRaw) return res.status(400).json({ error: "Missing FENs" });
-
-  let fens;
-  try {
-    fens = JSON.parse(fensRaw);
-    if (!Array.isArray(fens)) throw new Error("FENs must be an array");
-  } catch (e) {
-    return res.status(400).json({ error: "Invalid FENs format" });
-  }
-
-  // SSE Headers
-  res.setHeader('Content-Type', 'text/event-stream');
-  res.setHeader('Cache-Control', 'no-cache');
-  res.setHeader('Connection', 'keep-alive');
-  res.flushHeaders();
-
-  let isDisconnected = false;
-  req.on('close', () => {
-    isDisconnected = true;
-    console.log('[SSE] Client disconnected, stopping analysis loop.');
-  });
-
-  console.log(`[SSE] Starting stream for ${fens.length} FENs`);
-
-  for (let i = 0; i < fens.length; i++) {
-    if (isDisconnected) break;
-
-    const fenData = fens[i];
-    // Supports both array of strings or array of objects {fen, userMove, classification}
-    const fen = typeof fenData === 'string' ? fenData : fenData.fen;
-    const userMove = typeof fenData === 'object' ? fenData.userMove : undefined;
-    const classification = typeof fenData === 'object' ? fenData.classification : undefined;
-
-    try {
-      const result = await performAnalysis(
-        fen, 
-        model, 
-        language || 'es', 
-        parseInt(moveTime) || 200,
-        userMove,
-        classification
-      );
-      
-      if (!isDisconnected) {
-        res.write(`data: ${JSON.stringify({ index: fenData.index ?? i, result })}\n\n`);
-      }
-    } catch (err) {
-      console.error(`[SSE] Error analyzing FEN at index ${i}:`, err);
-      if (!isDisconnected) {
-        res.write(`data: ${JSON.stringify({ index: fenData.index ?? i, error: err.message })}\n\n`);
-      }
-    }
-  }
-
-  if (!isDisconnected) {
-    res.write('data: [DONE]\n\n');
-    res.end();
-  }
-});
-
-async function startServer() {
-  try {
-    await pool.waitForAllReady();
-    app.listen(PORT, () => {
-      console.log(`[Server] Chess Analyzer Backend running on http://localhost:${PORT}`);
-    });
-  } catch (err) {
-    console.error("Failed to start server:", err);
-    process.exit(1);
-  }
-}
-
-startServer();
+  if (!f
