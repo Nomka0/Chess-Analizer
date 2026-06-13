@@ -496,6 +496,23 @@ function App() {
         }
       }
 
+      // If alt board is active, show yellow arrows for alternative sequences
+      if (isAltBoardActive && currentAnalysis && currentAnalysis.pv) {
+        const pvMoves = currentAnalysis.pv.split(' ');
+        if (pvMoves.length >= 2) {
+          const orig = pvMoves[0].substring(0, 2);
+          const dest = pvMoves[0].substring(2, 4);
+          if (orig.length === 2 && dest.length === 2) {
+            shapes.push({
+              orig,
+              dest,
+              brush: 'yellow',
+              modifiers: { lineWidth: 10 }
+            });
+          }
+        }
+      }
+
       cg.current.set({ 
         fen: currentFen,
         drawable: { shapes },
@@ -615,26 +632,28 @@ function App() {
 
     setBatchAnalysisResults({ ...currentResults });
 
+    // RESTRICTED: Only analyze bad moves (inaccuracy, mistake, blunder)
     const errorClasses = ['inaccuracy', 'mistake', 'blunder'];
     
-    // Filter streamPayload to ONLY include moves from userColor
+    // Filter streamPayload to ONLY include moves from userColor that are BAD moves
     const filteredByColor = streamPayload.filter(m => {
         const moveColor = m.movingPlayer === 'w' ? 'white' : 'black';
-        return moveColor === userColor;
+        return moveColor === userColor && errorClasses.includes(m.classification);
     });
 
-    const earlyErrors = filteredByColor
-        .filter(m => errorClasses.includes(m.classification))
-        .slice(0, 2);
+    // If no bad moves, skip AI analysis entirely
+    if (filteredByColor.length === 0) {
+        setIsLoading(false);
+        setAnalysisProgress(100);
+        setAccuracy({ white: 0, black: 0 });
+        return;
+    }
 
-    const earlyErrorIndices = new Set(earlyErrors.map(m => m.index));
-    const remainingPool = filteredByColor.filter(m => !earlyErrorIndices.has(m.index));
-
-    const criticalMoves = remainingPool
+    const criticalMoves = filteredByColor
         .sort((a, b) => b.impact - a.impact)
-        .slice(0, 7 - earlyErrors.length);
+        .slice(0, 7);
 
-    const filteredPayload = [...earlyErrors, ...criticalMoves]
+    const filteredPayload = criticalMoves
         .sort((a, b) => a.index - b.index);
 
     const queryParams = new URLSearchParams({
