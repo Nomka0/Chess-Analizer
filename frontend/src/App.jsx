@@ -192,8 +192,14 @@ function App() {
   }, [evalScore]);
 
   useEffect(() => {
-    fetch('http://localhost:3000/api/models')
-      .then(res => res.json())
+    fetch('http://127.0.0.1:3000/api/models')
+      .then(async res => {
+        const contentType = res.headers.get("content-type");
+        if (!res.ok || !contentType || !contentType.includes("application/json")) {
+          throw new TypeError("Oops, we didn't get JSON from the server!");
+        }
+        return res.json();
+      })
       .then(data => {
         setModels(data);
         if (data.includes('qwen2.5:14b')) setSelectedModel('qwen2.5:14b');
@@ -272,7 +278,7 @@ function App() {
 
     setIsLoading(true);
     try {
-        const res = await fetch('http://localhost:3000/api/analyze', {
+        const res = await fetch('http://127.0.0.1:3000/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -515,7 +521,7 @@ function App() {
     for (let i = 0; i < positions.length; i += CHUNK_SIZE) {
         const chunk = positions.slice(i, i + CHUNK_SIZE);
         try {
-            const evals = await (await fetch('http://localhost:3000/api/evaluate-all', {
+            const evals = await (await fetch('http://127.0.0.1:3000/api/evaluate-all', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ fens: chunk.map(p => p.fen) })
@@ -614,7 +620,7 @@ function App() {
         moveTime: 200
     });
 
-    const eventSource = new EventSource(`http://localhost:3000/api/analyze-stream?${queryParams.toString()}`);
+    const eventSource = new EventSource(`http://127.0.0.1:3000/api/analyze-stream?${queryParams.toString()}`);
 
     eventSource.onmessage = (event) => {
         if (event.data === '[DONE]') {
@@ -811,7 +817,7 @@ function App() {
                 <span className="truncate">
                   {boardOrientation === 'white' ? playerNames.black : playerNames.white}
                   {boardOrientation === 'white' ? (playerNames.blackElo ? ` (${playerNames.blackElo})` : '') : (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '')}
-                </span>
+                </span
               </div>
               {accuracy.white > 0 && (
                 <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-violet-400 font-mono shrink-0">
@@ -832,7 +838,7 @@ function App() {
                 <span className="truncate">
                   {boardOrientation === 'white' ? playerNames.white : playerNames.black}
                   {boardOrientation === 'white' ? (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '') : (playerNames.blackElo ? ` (${playerNames.blackElo})` : '')}
-                </span>
+                </span
               </div>
               {accuracy.white > 0 && (
                 <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-emerald-400 font-mono shrink-0">
