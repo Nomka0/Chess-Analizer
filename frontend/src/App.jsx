@@ -466,29 +466,32 @@ function App() {
         userMove = currentHistory[activeIndex];
       }
 
-      // Calculate arrow from Stockfish's best move
+      // Stockfish's best move (always green)
       if (currentAnalysis && currentAnalysis.uciBestMove) {
         const uci = currentAnalysis.uciBestMove;
         if (uci.length >= 4) {
           const orig = uci.substring(0, 2);
           const dest = uci.substring(2, 4);
           
-          // If user move exists and differs from Stockfish's move, draw a red arrow
-          if (userMove && userMove.uci !== uci) {
-            shapes.push({
-              orig,
-              dest,
-              brush: 'red', // Red for wrong move
-              modifiers: { lineWidth: 10 }
-            });
-          } else {
-            // Green for correct/matching move (or no user move yet)
-            shapes.push({
-              orig,
-              dest,
-              brush: 'green', // Distinct color for engine suggestions
-              modifiers: { lineWidth: 10 }
-            });
+          // Add green arrow for Stockfish's suggestion
+          shapes.push({
+            orig,
+            dest,
+            brush: 'green',
+            modifiers: { lineWidth: 10 }
+          });
+          
+          // Add red arrow for user's bad move (mistake or blunder)
+          if (userMove && userMove.uci && userMove.uci !== uci) {
+            const classification = currentAnalysis.classification;
+            if (classification === 'mistake' || classification === 'blunder') {
+              shapes.push({
+                orig: userMove.uci.substring(0, 2),
+                dest: userMove.uci.substring(2, 4),
+                brush: 'red',
+                modifiers: { lineWidth: 10 }
+              });
+            }
           }
         }
       }
