@@ -1,0 +1,41 @@
+{
+  "es:qwen2.5-coder:14b:rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1": {
+    "fen": "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1",
+    "uciBestMove": "e2e4",
+    "bestmove": "1. e4",
+    "score": -18,
+    "bestScore": 19,
+    "scoreType": "cp",
+    "analysis": "**1. e4** es un/una **excelente** (37cp). El movimiento 1.e4 es una apertura clásica que controla el centro del tablero y ofrece muchas opciones de desarrollo.\n\n# Pros:\n- El movimiento 1.e4 controla el centro del tablero, lo que facilita el desarrollo de las piezas y puede dar al jugador Blancas una ventaja táctica.\n<details>\n<summary>Control del Centro</summary>\n<div class=\"variation\">1. e4 1... e5 2. <span class=\"chess-piece-icon\">♞</span>f3 <span class=\"chess-piece-icon\">♞</span>c6 3. <span class=\"chess-piece-icon\">♝</span>b5 <span class=\"chess-piece-icon\">♞</span>f6</div>\n</details>\n\n--- \n\n# La alternativa correcta: 1. e4\n\nEl movimiento 1.e4 es la mejor opción porque establece un buen control del centro y ofrece una línea natural para desarrollar las piezas, como se muestra en la Best Line proporcionada.\n\n<details>\n<summary>Ver continuación sugerida</summary>\n<div class=\"variation\">1. e4 e5 2. <span class=\"chess-piece-icon\">♞</span>f3 <span class=\"chess-piece-icon\">♞</span>c6 3. <span class=\"chess-piece-icon\">♝</span>c4 <span class=\"chess-piece-icon\">♞</span>f6 4. d3 <span class=\"chess-piece-icon\">♝</span>c5</div>\n</details>",
+    "language": "es",
+    "pv": "e2e4 e7e5 g1f3 b8c6 f1c4 g8f6 d2d3 f8c5 e1h1 d7d6",
+    "cpLoss": 37,
+    "classification": "excelente"
+  },
+  "es:qwen2.5-coder:14b:rnbqkbnr/pppppppp/8/8/3P4/8/PPPP1PPP/RNBQKBNR b KQkq d3 0 1": {
+    "fen": "rnbqkbnr/pppppppp/8/8/3P4/8/PPPP1PPP/RNBQKBNR b KQkq d3 0 1",
+    "uciBestMove": "b7b6",
+    "bestmove": "1... b6",
+    "score": -112,
+    "bestScore": -35,
+    "scoreType": "cp",
+    "analysis": "**1... e5** es un/una **imprecisión** (77cp). El movimiento 1... e5 es una imprecisión que permite al oponente desarrollar su rey y torre de manera más eficiente.\n\n# Pros:\n- El movimiento 1... e5 permite al rey negro avanzar y desarrollarse más rápidamente, lo que puede ser ventajoso en algunas líneas abiertas.\n<details>\n<summary>Desarrollo del Rey</summary>\n<div class=\"variation\">N/A</div>\n</details>\n\n--- \n\n# La alternativa correcta: 1... b6\n\nEl mejor movimiento 1... b6 es superior porque establece una base sólida para el desarrollo de las piezas negras, especialmente la torre y el alfil. Además, permite un desarrollo más eficiente del rey negro sin comprometer la defensa.\n\n<details>\n<summary>Ver continuación sugerida</summary>\n<div class=\"variation\">1... b6 2. g3 <span class=\"chess-piece-icon\">♝</span>b7 3. <span class=\"chess-piece-icon\">♞</span>f3 g6 4. <span class=\"chess-piece-icon\">♝</span>g2 <span class=\"chess-piece-icon\">♝</span>g7</div>\n</details>",
+    "language": "es",
+    "pv": "b7b6 g2g3 c8b7 g1f3 g7g6 f1g2 f8g7 e1h1 e7e6 c2c4",
+    "cpLoss": 77,
+    "classification": "imprecisión"
+  },
+  "es:qwen2.5-coder:32b:rnb1kbnr/ppp2ppp/4p3/3q4/8/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 4": {
+    "fen": "rnb1kbnr/ppp2ppp/4p3/3q4/8/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 4",
+    "uciBestMove": "d2d4",
+    "bestmove": "4. d4",
+    "score": -55,
+    "bestScore": 63,
+    "scoreType": "cp",
+    "analysis": "**4. c4** es un/una **error** (118cp). La jugada 4. c4 permite a Negras desarrollar su reina y amenaza el caballo blanco.\n\n# Contras:\n- Con 4... <span class=\"chess-piece-icon\">♛</span>a5, Negras controlan el centro y amenazan al caballo en c3. Además, <span class=\"chess-piece-icon\">♝</span>e2 no evita que Negras desarrollen su reina.\n<details>\n<summary>Desarrollo de la reina</summary>\n<div class=\"variation\">4. c4 4... <span class=\"chess-piece-icon\">♛</span>a5 5. <span class=\"chess-piece-icon\">♝</span>e2 <span class=\"chess-piece-icon\">♞</span>f6</div>\n</details>\n\n--- \n\n# La alternativa correcta: 4. d4\n\n4. d4 es una jugada centralizadora que controla el centro y amenaza la torre negra en a5 con <span class=\"chess-piece-icon\">♛</span>d3, lo cual es más efectivo que 4. c4.\n\n<details>\n<summary>Ver continuación sugerida</summary>\n<div class=\"variation\">4. d4 <span class=\"chess-piece-icon\">♞</span>f6 5. <span class=\"chess-piece-icon\">♝</span>e2 <span class=\"chess-piece-icon\">♛</span>a5+ 6. <span class=\"chess-piece-icon\">♞</span>c3 <span class=\"chess-piece-icon\">♝</span>e7 7. <span class=\"chess-piece-icon\">♞</span>e5 c6 8. <span class=\"chess-piece-icon\">♛</span>d3</div>\n</details>",
+    "language": "es",
+    "pv": "d2d4 g8f6 f1e2 d5a5 b1c3 f8e7 f3e5 c7c6 d1d3 e8h8",
+    "cpLoss": 118,
+    "classification": "error"
+  }
+}

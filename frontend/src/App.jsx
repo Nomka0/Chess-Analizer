@@ -160,6 +160,7 @@ function App() {
   
   const [sidebarWidth, setSidebarWidth] = useState(950);
   const [moveListWidth, setMoveListWidth] = useState(200);
+  const [altVariation, setAltVariation] = useState(null); // { moves: uci[], startFen: string }
   const isResizingH = useRef(false);
   const isResizingV = useRef(false);
 
@@ -209,6 +210,9 @@ function App() {
 
   const navigateHistory = useCallback((target, isRelative = false, isAlt = isAltBoardActive) => {
     setPreviewGame(null);
+    if (!isAlt) {
+      setAltVariation(null); // Clear variation when navigating main board
+    }
     let newIndex;
     const gameInstance = isAlt ? altGameRef.current : gameRef.current;
     const hIdx = isAlt ? altHistoryIndex : historyIndex;
@@ -318,6 +322,7 @@ function App() {
       }
       setBatchAnalysisResults({});
       setAccuracy({ white: 0, black: 0 });
+      setAltVariation(null); // Clear variation on new game
       setShowImportModal(null);
       setFenInput('');
     } catch (e) { alert("Import Error: " + e.message); }
@@ -366,6 +371,7 @@ function App() {
       const isVariationClick = e.target.closest('.variation-wrapper') || e.target.closest('.clickable-move');
       if (!isAltBoardClick && !isVariationClick) {
         setIsAltBoardActive(false);
+        setAltVariation(null);
       }
     };
     window.addEventListener('mousedown', handleGlobalClick);
@@ -497,18 +503,48 @@ function App() {
       }
 
       // If alt board is active, show yellow arrows for alternative sequences
-      if (isAltBoardActive && currentAnalysis && currentAnalysis.pv) {
-        const pvMoves = currentAnalysis.pv.split(' ');
-        if (pvMoves.length >= 2) {
-          const orig = pvMoves[0].substring(0, 2);
-          const dest = pvMoves[0].substring(2, 4);
-          if (orig.length === 2 && dest.length === 2) {
-            shapes.push({
-              orig,
-              dest,
-              brush: 'yellow',
-              modifiers: { lineWidth: 10 }
-            });
+      if (isAltBoardActive) {
+        // Priority 1: Show stored variation from user click
+        if (altVariation && altVariation.moves.length > 0) {
+          // currentVariationIndex = how far into the variation we are on the alt board
+          // altHistoryIndex is the absolute index in alt game history
+          // branchPointIndex is where the variation starts in alt game history
+          const currentVariationIndex = altHistoryIndex - (altVariation.branchPointIndex ?? 0);
+          
+          // Render remaining variation moves as yellow arrows
+          for (let i = Math.max(0, currentVariationIndex); i < altVariation.moves.length - 1; i++) {
+            const uci = altVariation.moves[i];
+            if (uci.length >= 4) {
+              const orig = uci.substring(0, 2);
+              const dest = uci.substring(2, 4);
+              if (orig.length === 2 && dest.length === 2) {
+                shapes.push({
+                  orig,
+                  dest,
+                  brush: 'yellow',
+                  modifiers: { lineWidth: 10, opacity: 0.7 }
+                });
+              }
+            }
+          }
+        } 
+        // Priority 2: Fallback to PV from current analysis (first move only)
+        else if (currentAnalysis && currentAnalysis.pv) {
+          const pvMoves = currentAnalysis.pv.split(' ');
+          if (pvMoves.length >= 1) {
+            const uci = pvMoves[0];
+            if (uci.length >= 4) {
+              const orig = uci.substring(0, 2);
+              const dest = uci.substring(2, 4);
+              if (orig.length === 2 && dest.length === 2) {
+                shapes.push({
+                  orig,
+                  dest,
+                  brush: 'yellow',
+                  modifiers: { lineWidth: 10 }
+                });
+              }
+            }
           }
         }
       }
@@ -519,7 +555,7 @@ function App() {
         animation: { enabled: true, duration: 250 }
       });
     }
-  }, [currentFen, currentAnalysis, isAltBoardActive, altHistoryIndex, historyIndex]); // Re-run when FEN or Analysis (with UCI) changes
+  }, [currentFen, currentAnalysis, isAltBoardActive, altHistoryIndex, historyIndex, altVariation]); // Re-run when FEN or Analysis (with UCI) changes
 
   function handleFlip() {
     setBoardOrientation(prev => prev === 'white' ? 'black' : 'white');
@@ -606,13 +642,16 @@ function App() {
         const movingPlayer = prevGame.turn();
 
         const prevEval = allEvals[prevPos.fen];
-        const bestScore = movingPlayer === 'b' ? -(prevEval?.score || 0) : (prevEval?.score || 0);
+        // Scores from the perspective of the moving player
+        const bestScore = prevEval?.score || 0;
         const bestProb = centipawnsToWinProb(bestScore);
         let actualScore = allEvals[pos.fen]?.score || 0;
-        if (movingPlayer === 'b') actualScore = -actualScore;
+        // After the move, it's opponent's turn, so negate to get moving player's perspective
+        actualScore = -actualScore;
 
         const actualProb = centipawnsToWinProb(actualScore);
         const impact = Math.max(0, bestProb - actualProb) * 100;
+        // cpLoss from moving player's perspective: positive when position worsened
         const cpLoss = Math.max(0, bestScore - actualScore);
         const moveNumber = Math.ceil((idx + 1) / 2);
         const classification = getClassification(impact, cpLoss, moveNumber, pos.san);
@@ -756,15 +795,30 @@ function App() {
     const targetMoveIndex = moveIndex >= 0 ? moveIndex : 0;
     
     // Apply ALL moves in the variation so we can navigate them all
+    const variationUciMoves = [];
     for (let i = 0; i < moves.length; i++) {
         if (moves[i]) {
             try {
-                newAltGame.move(moves[i]);
+                const moved = newAltGame.move(moves[i]);
+                if (moved) variationUciMoves.push(moved.from + moved.to + (moved.promotion || ''));
             } catch {
                 break;
             }
         }
     }
+
+    // Store the variation for yellow arrow rendering (from the position where variation starts)
+    const variationStartGame = new Chess(mainBaseFen);
+    for (const m of movesBefore) {
+        variationStartGame.move(m.san);
+    }
+    // Branch point is the number of moves in main game before the variation starts
+    const branchPointIndex = movesBefore.length;
+    setAltVariation({
+        moves: variationUciMoves,
+        startFen: variationStartGame.fen(),
+        branchPointIndex
+    });
 
     // 6. Save the FULL game to the ref
     altGameRef.current = newAltGame;

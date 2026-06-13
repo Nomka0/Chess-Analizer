@@ -128,6 +128,9 @@ class StockfishWorker {
   async evaluate(fen, options = { depth: 22 }) {
     this.isBusy = true;
     this.buffer = ''; // Limpiar el buffer antes de iniciar una lectura nueva
+    const startTime = performance.now();
+
+    console.log(`[StockfishWorker ${this.id}] ▶️  Starting eval for [${getFenId(fen)}...] (depth=${options.depth || 22})`);
 
     return new Promise((resolve, reject) => {
       this.currentResolve = resolve;
@@ -144,11 +147,20 @@ class StockfishWorker {
 
       setTimeout(() => {
         if (this.currentResolve === resolve) {
-          console.warn(`[Stockfish ${this.id}] Timeout de emergencia (30s) disparado para FEN: ${fen.substring(0,15)}`);
+          const elapsed = (performance.now() - startTime).toFixed(1);
+          console.warn(`[StockfishWorker ${this.id}] ⏱️  TIMEOUT after ${elapsed}ms for [${getFenId(fen)}...]`);
           this.cleanup();
           reject(new Error(`Stockfish ${this.id} evaluation timed out`));
         }
-      }, timeoutDuration); 
+      }, timeoutDuration);
+    }).then(result => {
+      const elapsed = (performance.now() - startTime).toFixed(1);
+      console.log(`[StockfishWorker ${this.id}] ✅ Completed [${getFenId(fen)}...] in ${elapsed}ms (score=${result.score}, bestmove=${result.bestmove}, pv=${result.pv?.substring(0,50)})`);
+      return result;
+    }).catch(err => {
+      const elapsed = (performance.now() - startTime).toFixed(1);
+      console.error(`[StockfishWorker ${this.id}] ❌ Failed [${getFenId(fen)}...] after ${elapsed}ms: ${err.message}`);
+      throw err;
     });
   }
 }
@@ -161,11 +173,14 @@ class StockfishPool {
 
   async waitForAllReady() {
     await Promise.all(this.workers.map(w => w.initPromise));
-    console.log(`[Pool] All ${ENGINE_COUNT} workers initialized.`);
+    console.log(`[StockfishPool] ✅ All ${ENGINE_COUNT} workers initialized and ready.`);
   }
 
   async addRequest(fen, options) {
     const startQueue = performance.now();
+    const queuePos = this.queue.length + 1;
+    const idleCount = this.workers.filter(w => !w.isBusy).length;
+    console.log(`[StockfishPool] 📥 Request queued for [${getFenId(fen)}...] (queue pos: ${queuePos}, idle workers: ${idleCount}/${ENGINE_COUNT})`);
     return new Promise((resolve, reject) => {
       this.queue.push({ fen, options, resolve, reject, startQueue });
       this.processQueue();
@@ -176,12 +191,15 @@ class StockfishPool {
     if (this.queue.length === 0) return;
 
     const idleWorker = this.workers.find(w => !w.isBusy);
-    if (!idleWorker) return;
+    if (!idleWorker) {
+        console.log(`[StockfishPool] ⏳ All workers busy, ${this.queue.length} requests waiting...`);
+        return;
+    }
 
     const { fen, options, resolve, reject, startQueue } = this.queue.shift();
     
     const waitTime = (performance.now() - startQueue).toFixed(1);
-    console.log(`[Perf: Stockfish] [${getFenId(fen)}] Queue Wait Time: ${waitTime}ms`);
+    console.log(`[StockfishPool] ▶️  Dispatching [${getFenId(fen)}...] to worker ${idleWorker.id} (waited ${waitTime}ms in queue, ${this.queue.length} remaining)`);
 
     try {
       const result = await idleWorker.evaluate(fen, options);
@@ -292,6 +310,7 @@ function sanitizeLLMOutput(text) {
 
 async function getLichessCloudEval(fen) {
     const fenId = getFenId(fen);
+    const startTime = performance.now();
     try {
         // Lichess requires a full FEN
         let fullFen = fen;
@@ -299,12 +318,13 @@ async function getLichessCloudEval(fen) {
             const check = new Chess(fen);
             fullFen = check.fen();
         } catch (e) {
+            console.warn(`[Lichess] ⚠️  Invalid FEN for [${fenId}...]: ${e.message}`);
             return null; // Invalid FEN
         }
 
         const url = `https://lichess.org/api/cloud-eval?fen=${encodeURIComponent(fullFen)}`;
-        console.log(`[Lichess] Requesting eval for [${fenId}...]`);
-        
+        console.log(`[Lichess] 📡 Requesting cloud eval for [${fenId}...]`);
+
         const options = {
             headers: {
                 'User-Agent': 'Chess-Analyzer-Pro/1.0',
@@ -312,12 +332,12 @@ async function getLichessCloudEval(fen) {
             },
             timeout: 5000,
             // Force IPv4 at the socket level to resolve 'socket hang up' / 'fetch failed'
-            family: 4 
+            family: 4
         };
 
         return new Promise((resolve) => {
             const req = https.get(url, options, (res) => {
-                console.log(`[Lichess] Response status: ${res.statusCode} for [${fenId}...]`);
+                console.log(`[Lichess] 📥 Response status: ${res.statusCode} for [${fenId}...]`);
                 if (res.statusCode !== 200) {
                     res.resume(); // Consume response data to free up memory
                     return resolve(null);
@@ -326,11 +346,12 @@ async function getLichessCloudEval(fen) {
                 let body = '';
                 res.on('data', (chunk) => { body += chunk; });
                 res.on('end', () => {
+                    const duration = (performance.now() - startTime).toFixed(1);
                     try {
                         const data = JSON.parse(body);
                         if (data.pvs && data.pvs.length > 0) {
                             const bestMove = data.pvs[0].moves.split(' ')[0];
-                            console.log(`[Lichess] Found bestmove: ${bestMove} for [${fenId}...]`);
+                            console.log(`[Lichess] ✅ Found bestmove: ${bestMove} for [${fenId}...] in ${duration}ms (cp=${data.pvs[0].cp}, mate=${data.pvs[0].mate}, pv=${data.pvs[0].moves?.substring(0,60)})`);
                             resolve({
                                 bestmove: bestMove,
                                 score: data.pvs[0].cp ?? (data.pvs[0].mate * 100),
@@ -339,35 +360,39 @@ async function getLichessCloudEval(fen) {
                                 source: 'lichess'
                             });
                         } else {
-                            console.log(`[Lichess] No PVS found for [${fenId}...]`);
+                            console.log(`[Lichess] ⚠️  No PVS found for [${fenId}...] in ${duration}ms`);
                             resolve(null);
                         }
                     } catch (e) {
-                        console.error(`[Lichess] JSON Parse Error: ${e.message}`);
+                        console.error(`[Lichess] ❌ JSON Parse Error for [${fenId}...]: ${e.message}`);
                         resolve(null);
                     }
                 });
             });
 
             req.on('error', (e) => {
-                console.error(`[Lichess] Request error: ${e.message}`);
+                const duration = (performance.now() - startTime).toFixed(1);
+                console.error(`[Lichess] ❌ Request error for [${fenId}...] after ${duration}ms: ${e.message}`);
                 resolve(null);
             });
 
             req.on('timeout', () => {
-                console.warn(`[Lichess] Request timeout for [${fenId}...]`);
+                const duration = (performance.now() - startTime).toFixed(1);
+                console.warn(`[Lichess] ⏱️  Request timeout for [${fenId}...] after ${duration}ms`);
                 req.destroy();
                 resolve(null);
             });
         });
 
     } catch (e) {
-        console.error(`[Lichess] Unexpected error: ${e.message}`);
+        console.error(`[Lichess] ❌ Unexpected error for [${fenId}...]: ${e.message}`);
         return null;
     }
 }
 
 async function getChessApiEval(fen) {
+    const fenId = getFenId(fen);
+    const startTime = performance.now();
     return new Promise((resolve) => {
         try {
             const body = JSON.stringify({ fen });
@@ -384,15 +409,18 @@ async function getChessApiEval(fen) {
                 family: 4
             };
 
+            console.log(`[ChessApi] 📡 Requesting eval for [${fenId}...]`);
             const req = https.request(options, (res) => {
                 let bodyRes = '';
                 res.on('data', (chunk) => { bodyRes += chunk; });
                 res.on('end', () => {
+                    const duration = (performance.now() - startTime).toFixed(1);
+                    console.log(`[ChessApi] 📥 Response status: ${res.statusCode} for [${fenId}...] in ${duration}ms`);
                     if (res.statusCode === 200) {
                         try {
                             const data = JSON.parse(bodyRes);
                             if (data.move) {
-                                console.log(`[ChessApi] Found bestmove: ${data.move}`);
+                                console.log(`[ChessApi] ✅ Found bestmove: ${data.move} for [${fenId}...] (cp=${data.centipawns})`);
                                 return resolve({
                                     bestmove: data.move,
                                     score: parseInt(data.centipawns) ?? 0,
@@ -400,26 +428,42 @@ async function getChessApiEval(fen) {
                                     source: 'chess-api'
                                 });
                             }
-                        } catch (e) {}
+                            console.log(`[ChessApi] ⚠️  No move in response for [${fenId}...]`);
+                        } catch (e) {
+                            console.error(`[ChessApi] ❌ JSON Parse Error for [${fenId}...]: ${e.message}`);
+                        }
+                    } else {
+                        console.warn(`[ChessApi] ⚠️  Non-200 status ${res.statusCode} for [${fenId}...]`);
                     }
                     resolve(null);
                 });
             });
 
             req.on('error', (e) => {
-                console.warn(`[ChessApi] Skipped: ${e.message}`);
+                const duration = (performance.now() - startTime).toFixed(1);
+                console.warn(`[ChessApi] ⏭️  Skipped for [${fenId}...] after ${duration}ms: ${e.message}`);
+                resolve(null);
+            });
+
+            req.on('timeout', () => {
+                const duration = (performance.now() - startTime).toFixed(1);
+                console.warn(`[ChessApi] ⏱️  Timeout for [${fenId}...] after ${duration}ms`);
+                req.destroy();
                 resolve(null);
             });
 
             req.write(body);
             req.end();
         } catch (e) {
+            console.error(`[ChessApi] ❌ Unexpected error for [${fenId}...]: ${e.message}`);
             resolve(null);
         }
     });
 }
 
 async function getLichessMastersEval(fen) {
+    const fenId = getFenId(fen);
+    const startTime = performance.now();
     return new Promise((resolve) => {
         const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}`;
         const options = {
@@ -427,16 +471,19 @@ async function getLichessMastersEval(fen) {
             family: 4
         };
 
+        console.log(`[LichessMasters] 📡 Requesting masters eval for [${fenId}...]`);
         const req = https.get(url, options, (res) => {
             let body = '';
             res.on('data', (chunk) => { body += chunk; });
             res.on('end', () => {
+                const duration = (performance.now() - startTime).toFixed(1);
+                console.log(`[LichessMasters] 📥 Response status: ${res.statusCode} for [${fenId}...] in ${duration}ms`);
                 if (res.statusCode === 200) {
                     try {
                         const data = JSON.parse(body);
                         if (data.moves && data.moves.length > 0) {
                             const bestMove = data.moves[0].uci;
-                            console.log(`[LichessMasters] Found bestmove: ${bestMove}`);
+                            console.log(`[LichessMasters] ✅ Found bestmove: ${bestMove} for [${fenId}...] (games=${data.moves[0].white + data.moves[0].draws + data.moves[0].black})`);
                             return resolve({
                                 bestmove: bestMove,
                                 score: 0,
@@ -444,62 +491,79 @@ async function getLichessMastersEval(fen) {
                                 source: 'lichess-masters'
                             });
                         }
-                    } catch (e) {}
+                        console.log(`[LichessMasters] ⚠️  No moves in masters DB for [${fenId}...]`);
+                    } catch (e) {
+                        console.error(`[LichessMasters] ❌ JSON Parse Error for [${fenId}...]: ${e.message}`);
+                    }
+                } else {
+                    console.warn(`[LichessMasters] ⚠️  Non-200 status ${res.statusCode} for [${fenId}...]`);
                 }
                 resolve(null);
             });
         });
 
         req.on('error', (e) => {
-            console.warn(`[LichessMasters] Skipped: ${e.message}`);
+            const duration = (performance.now() - startTime).toFixed(1);
+            console.warn(`[LichessMasters] ⏭️  Skipped for [${fenId}...] after ${duration}ms: ${e.message}`);
             resolve(null);
         });
-        
-        req.on('timeout', () => { req.destroy(); resolve(null); });
+
+        req.on('timeout', () => {
+            const duration = (performance.now() - startTime).toFixed(1);
+            console.warn(`[LichessMasters] ⏱️  Timeout for [${fenId}...] after ${duration}ms`);
+            req.destroy();
+            resolve(null);
+        });
     });
 }
 
 async function getEngineEvaluation(fen, options) {
     const fenId = getFenId(fen);
-    
+    const startTime = performance.now();
+
     // Level 1: Local JSON Cache
     const cached = getCachedEngine(fen);
     if (cached) {
-        console.log(`[Engine] Cache Hit for [${fenId}...]`);
+        console.log(`[Engine] ✅ Cache HIT for [${fenId}...] (score=${cached.score}, bestmove=${cached.bestmove}, source=${cached.source})`);
         return { ...cached, source: 'cache' };
     }
+    console.log(`[Engine] 🔍 Cache MISS for [${fenId}...] - querying external sources`);
 
     // Level 2: Lichess Cloud Eval
-    console.log(`[Engine] Trying Lichess Cloud for [${fenId}...]`);
+    console.log(`[Engine] 🌐 Trying Lichess Cloud for [${fenId}...]`);
     const lichess = await getLichessCloudEval(fen);
     if (lichess) {
-        console.log(`[Engine] Lichess Cloud Hit for [${fenId}...]`);
+        console.log(`[Engine] ✅ Lichess Cloud HIT for [${fenId}...] (score=${lichess.score}, bestmove=${lichess.bestmove}, depth=cloud)`);
         setCachedEngine(fen, lichess);
         return lichess;
     }
+    console.log(`[Engine] ❌ Lichess Cloud MISS for [${fenId}...]`);
 
     // Level 3: Chess-API
-    console.log(`[Engine] Trying Chess-API for [${fenId}...]`);
+    console.log(`[Engine] 🌐 Trying Chess-API for [${fenId}...]`);
     const chessApi = await getChessApiEval(fen);
     if (chessApi) {
-        console.log(`[Engine] Chess-API Hit for [${fenId}...]`);
+        console.log(`[Engine] ✅ Chess-API HIT for [${fenId}...] (score=${chessApi.score}, bestmove=${chessApi.bestmove})`);
         setCachedEngine(fen, chessApi);
         return chessApi;
     }
+    console.log(`[Engine] ❌ Chess-API MISS for [${fenId}...]`);
 
     // Level 4: Lichess Masters
-    console.log(`[Engine] Trying Lichess Masters for [${fenId}...]`);
+    console.log(`[Engine] 🌐 Trying Lichess Masters for [${fenId}...]`);
     const masters = await getLichessMastersEval(fen);
     if (masters) {
-        console.log(`[Engine] Lichess Masters Hit for [${fenId}...]`);
+        console.log(`[Engine] ✅ Lichess Masters HIT for [${fenId}...] (bestmove=${masters.bestmove})`);
         setCachedEngine(fen, masters);
         return masters;
     }
+    console.log(`[Engine] ❌ Lichess Masters MISS for [${fenId}...]`);
 
     // Level 5: Local Stockfish
-    console.log(`[Engine] Stockfish fallback for [${fenId}...]`);
+    console.log(`[Engine] ♟️  Stockfish local analysis for [${fenId}...] (depth=${options?.depth || 22})`);
     const local = await pool.addRequest(fen, options);
-    console.log(`[Engine] Stockfish result received for [${fenId}...]`);
+    const duration = (performance.now() - startTime).toFixed(1);
+    console.log(`[Engine] ✅ Stockfish completed for [${fenId}...] in ${duration}ms (score=${local.score}, bestmove=${local.bestmove}, pv=${local.pv?.substring(0,50)})`);
     const result = { ...local, source: 'stockfish' };
     setCachedEngine(fen, result);
     return result;
@@ -511,18 +575,20 @@ function centipawnsToWinProb(cp) {
 }
 
 // Classification based on win probability impact (percentage points)
-// Aligns with frontend getClassification logic
-function classifyMove(cpLoss, language = 'es') {
-    // Convert cpLoss to win probability impact
-    // Assuming typical position around 0cp (50% win prob)
-    // Impact ≈ cpLoss * 0.006 (rough conversion: 100cp ≈ 14% win prob change near 50%)
-    // More accurate: compute actual win prob difference
-    const bestProb = centipawnsToWinProb(0); // 0.5
-    const actualProb = centipawnsToWinProb(-cpLoss); // From perspective of player who lost cp
-    const impact = (bestProb - actualProb) * 100; // Percentage points
-    
+// Uses actual scores like frontend getClassification logic
+function classifyMove(bestScore, actualScore, language = 'es', moveNumber = null, san = null) {
+    const bestProb = centipawnsToWinProb(bestScore);
+    const actualProb = centipawnsToWinProb(actualScore);
+    const impact = Math.max(0, bestProb - actualProb) * 100;
+    const cpLoss = Math.max(0, bestScore - actualScore);
+
     const isEn = language === 'en';
-    
+
+    // Match frontend: first move e4/d4 is excellent
+    if (moveNumber === 1 && (san === 'e4' || san === 'd4')) {
+        return isEn ? 'excellent' : 'excelente';
+    }
+
     if (cpLoss <= 10) {
         return isEn ? 'best' : 'mejor';
     }
@@ -545,7 +611,8 @@ function classifyMove(cpLoss, language = 'es') {
 }
 
 async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs = 200, userMove, classification) {
-    console.log(`[API] Analysis Request: FEN=${fen.substring(0,10)}..., Model=${modelOverride}, Lang=${language}, Move=${userMove}, Class=${classification}`);
+    const startTotal = performance.now();
+    console.log(`[AI Analysis] 🚀 Starting for FEN=[${getFenId(fen)}...] Model=${modelOverride || 'default'} Lang=${language} Move=${userMove} Class=${classification}`);
     const fenId = getFenId(fen);
     
     // 1. Definimos primero la variable del modelo (¡Esto arregla el ReferenceError!)
@@ -553,7 +620,11 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
     
     // 2. Ahora sí, el chequeo del Cache tiene acceso a la variable 'model'
     const cached = getCachedAnalysis(fen, model, language);
-    if (cached) return cached;
+    if (cached) {
+        console.log(`[AI Analysis] ✅ Cache HIT for [${fenId}...] - returning cached analysis`);
+        return cached;
+    }
+    console.log(`[AI Analysis] 🔍 Cache MISS for [${fenId}...] - proceeding with fresh analysis`);
 
     // Preparar tablero post-move para calcular la refutación en paralelo
     const chess = new Chess(fen);
@@ -562,7 +633,7 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
 
     // CONFIGURACIÓN DE MOTOR: Forzamos profundidad 22 para máxima precisión
     let stockfishOptions = { depth: 22 }; 
-    console.log(`[Engine] Iniciando análisis a profundidad 22.`);
+    console.log(`[AI Analysis] ♟️  Requesting Stockfish eval (depth=22) for [${fenId}...]`);
     
     let tempChessFen = null;
     try {
@@ -572,7 +643,7 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
             if (m) tempChessFen = tempChess.fen();
         }
     } catch(e) {
-        console.error("Invalid user move for FEN setup", e);
+        console.error(`[AI Analysis] ❌ Invalid user move for FEN setup: ${e.message}`);
     }
 
     // Lanzamos ambas peticiones al Pool pasando el objeto stockfishOptions
@@ -585,9 +656,9 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
     }
 
     // Esperamos las respuestas de Stockfish en paralelo
-    console.log(`[PerformAnalysis] Waiting for engine results for [${fenId}...]`);
+    console.log(`[AI Analysis] ⏳ Waiting for engine results for [${fenId}...] (${stockfishPromises.length} positions)`);
     const stockfishResults = await Promise.all(stockfishPromises);
-    console.log(`[PerformAnalysis] Engine results received for [${fenId}...]`);
+    console.log(`[AI Analysis] ✅ Engine results received for [${fenId}...]`);
     
     const evaluation = stockfishResults[0];
     const postMoveEvaluation = stockfishResults[1] || null; // Manejo por si no hubo jugada del usuario
@@ -595,7 +666,7 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
     const bestScore = evaluation.score;
     const sanBestMove = uciToSan(fen, evaluation.bestmove);
     const sanPv = evaluation.pv ? uciToSan(fen, evaluation.pv) : 'N/A';
-
+    
     let sanUserMove = 'N/A';
     if (userMove) {
         const unicodeMapping = { 'N': '♘', 'B': '♗', 'R': '♖', 'Q': '♕', 'K': '♔' };
@@ -617,11 +688,13 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
     }
 
     const cpLoss = Math.max(0, bestScore - actualScore);
-    
+
     // ¡NUEVA LÓGICA DE CLASIFICACIÓN! - Use impact-based classification (aligns with frontend)
     // IGNORE the passed 'classification' parameter as it may be buggy (from frontend)
-    const mappedClassification = classifyMove(cpLoss, language);
+    const mappedClassification = classifyMove(bestScore, actualScore, language, moveNumber, userMove);
     
+    console.log(`[AI Analysis] 📊 Evaluation: bestScore=${bestScore} actualScore=${actualScore} cpLoss=${cpLoss} classification=${mappedClassification} bestMove=${sanBestMove}`);
+
     // chess.turn() devuelve 'w' o 'b' del FEN original (antes del movimiento del usuario)
     const playerColorCode = chess.turn(); 
     const systemPrompt = getSystemPrompt(language, playerColorCode);
@@ -635,18 +708,19 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
 
     // 3. Ollama Profiling (JSON Mode)
     const startOllama = performance.now();
+    console.log(`[AI Analysis] 🤖 Calling Ollama (${model}) for [${fenId}...]...`);
     let generatedHtml = '';
 
     try {
         const fullPrompt = `${systemPrompt}\n\n[Context Data]\n${userPrompt}`;
-
+        
         const response = await ollama.generate({
             model: model,
             prompt: fullPrompt,
             format: 'json', // <--- CRÍTICO: Fuerza a Ollama a devolver un JSON puro
             options: { 
-                temperature: 0.0, // Un poco de temperatura para mejorar la redacción
-                num_predict: 512, // Reducido: el JSON es mucho más corto que el HTML
+                temperature: 0.0,
+                num_predict: 512,
                 num_ctx: 4096,
             }
         });
@@ -657,8 +731,9 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
             // Limpieza preventiva por si el LLM pone tags de markdown "```json"
             const rawJson = response.response.replace(/```json/gi, '').replace(/```/g, '').trim();
             analysisData = JSON.parse(rawJson);
+            console.log(`[AI Analysis] ✅ Ollama JSON parsed successfully for [${fenId}...]`);
         } catch (e) {
-            console.error("[Parse Error] Falló al leer el JSON de Ollama:", e);
+            console.error(`[AI Analysis] ❌ Parse Error - Failed to read Ollama JSON for [${fenId}...]:`, e);
             throw new Error("El modelo no devolvió un JSON válido.");
         }
 
@@ -691,7 +766,9 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
         const cleanAnalysis = formatChessText(sanitizeLLMOutput(generatedHtml));
 
         const ollamaDuration = (performance.now() - startOllama).toFixed(1);
-        console.log(`[Perf: Ollama] [${fenId}] Inference Time: ${ollamaDuration}ms (JSON Mode)`);
+        const totalDuration = (performance.now() - startTotal).toFixed(1);
+        console.log(`[AI Analysis] ✅ Completed for [${fenId}...] in ${totalDuration}ms (Ollama: ${ollamaDuration}ms, Stockfish: ${totalDuration - ollamaDuration}ms)`);
+        console.log(`[AI Analysis] 📝 Generated analysis length: ${cleanAnalysis.length} chars`);
 
         const result = {
             fen,
@@ -711,7 +788,8 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
         return result;
 
     } catch (err) {
-        console.error(`[Ollama] Error:`, err);
+        const totalDuration = (performance.now() - startTotal).toFixed(1);
+        console.error(`[AI Analysis] ❌ Failed for [${fenId}...] after ${totalDuration}ms: ${err.message}`);
         throw err;
     }
 }
@@ -754,6 +832,109 @@ app.post('/api/analyze', async (req, res) => {
     res.json(result);
   } catch (error) {
     res.status(500).json({ error: error.message });
+  }
+});
+
+// SSE endpoint for batch AI analysis - streams results as they complete
+app.get('/api/analyze-stream', async (req, res) => {
+  const startApi = performance.now();
+  
+  // Set SSE headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  // Send a message to the client
+  const sendEvent = (data) => {
+    res.write(`data: ${JSON.stringify(data)}\n\n`);
+  };
+
+  const sendError = (index, error) => {
+    sendEvent({ index, error: error.message, result: null });
+  };
+
+  const sendDone = () => {
+    res.write('data: [DONE]\n\n');
+  };
+
+  try {
+    const { fens, model, language, moveTime } = req.query;
+    
+    if (!fens) {
+      sendEvent({ error: "Missing 'fens' parameter" });
+      sendDone();
+      console.log('[SSE Stream] ❌ Missing fens parameter');
+      return res.end();
+    }
+
+    const moves = JSON.parse(fens);
+    const modelOverride = model || 'qwen2.5:14b';
+    const lang = language || 'es';
+    const timeMs = parseInt(moveTime) || 200;
+    const streamStart = performance.now();
+
+    console.log(`[SSE Stream] 🚀 Starting batch analysis: ${moves.length} moves, Model=${modelOverride}, Lang=${lang}`);
+    moves.forEach((m, i) => {
+        console.log(`[SSE Stream] 📋 Move ${i+1}: index=${m.index} fen=${getFenId(m.fen)} move=${m.userMove} class=${m.classification} player=${m.movingPlayer}`);
+    });
+
+    // Process moves sequentially to avoid overwhelming the system
+    for (let i = 0; i < moves.length; i++) {
+      const move = moves[i];
+      const index = move.index; // 1-based index from frontend
+      
+      try {
+        // Check if client is still connected
+        if (res.destroyed) {
+            console.log(`[SSE Stream] ⚠️  Client disconnected, stopping at move ${index}`);
+            break;
+        }
+
+        console.log(`[SSE Stream] ⏳ Processing move ${index}/${moves.length} [${getFenId(move.fen)}...]`);
+        const moveStart = performance.now();
+
+        const result = await performAnalysis(
+          move.fen, 
+          modelOverride, 
+          lang, 
+          timeMs, 
+          move.userMove,
+          move.classification
+        );
+
+        const moveDuration = (performance.now() - moveStart).toFixed(1);
+        console.log(`[SSE Stream] ✅ Move ${index} completed in ${moveDuration}ms`);
+
+        sendEvent({ 
+          index, 
+          result: { 
+            analysis: result.analysis, 
+            bestmove: result.bestmove 
+          }, 
+          error: null 
+        });
+
+      } catch (err) {
+        console.error(`[SSE Stream] ❌ Error analyzing move ${index} [${getFenId(move.fen)}...]: ${err.message}`);
+        sendError(index, err);
+      }
+    }
+
+    const totalDuration = (performance.now() - streamStart).toFixed(1);
+    console.log(`[SSE Stream] ✅ Batch completed: ${moves.length} moves in ${totalDuration}ms`);
+    
+    sendDone();
+    const apiDuration = (performance.now() - startApi).toFixed(1);
+    console.log(`[Perf: SSE] Batch of ${moves.length} moves completed in ${apiDuration}ms`);
+    
+    res.end();
+
+  } catch (error) {
+    console.error('[SSE Stream] ❌ Fatal error:', error);
+    sendEvent({ error: error.message });
+    sendDone();
+    res.end();
   }
 });
 

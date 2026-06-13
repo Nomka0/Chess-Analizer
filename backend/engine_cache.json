@@ -1,0 +1,203 @@
+{
+  "rnbqkbnr/pppppppp/8/8/4P3/8/PPPP1PPP/RNBQKBNR b KQkq - 0 1": {
+    "bestmove": "e7e5",
+    "score": 18,
+    "scoreType": "cp",
+    "pv": "e7e5 g1f3 b8c6 f1b5 g8f6 e1h1 f6e4 f1e1 e4d6 f3e5",
+    "source": "lichess"
+  },
+  "rnbqkbnr/pppp1ppp/4p3/8/4P3/8/PPPP1PPP/RNBQKBNR w KQkq - 0 2": {
+    "bestmove": "b1c3",
+    "score": 22,
+    "scoreType": "cp",
+    "pv": "b1c3 d7d5 d2d4 g8f6 e4e5 f6d7 f2f4 c7c5 g1f3 b8c6",
+    "source": "lichess"
+  },
+  "rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1": {
+    "bestmove": "e2e4",
+    "score": 19,
+    "scoreType": "cp",
+    "pv": "e2e4 e7e5 g1f3 b8c6 f1c4 g8f6 d2d3 f8c5 e1h1 d7d6",
+    "source": "lichess"
+  },
+  "rnbqkbnr/ppp2ppp/4p3/3P4/8/5N2/PPPP1PPP/RNBQKB1R b KQkq - 0 3": {
+    "bestmove": "e6d5",
+    "score": 10,
+    "scoreType": "cp",
+    "pv": "e6d5 d2d4 g8f6 f1d3 c8g4 c2c3 f8e7 e1h1 e8h8 c1g5",
+    "source": "lichess"
+  },
+  "rnbqkbnr/ppp2ppp/4p3/3p4/4P3/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 3": {
+    "bestmove": "e4e5",
+    "score": 14,
+    "scoreType": "cp",
+    "pv": "e4e5 c7c5 c2c3 d5d4 b1a3 b8c6 f1d3 f7f5 e5f6 g8f6",
+    "source": "lichess"
+  },
+  "rnbqkbnr/pppp1ppp/4p3/8/4P3/5N2/PPPP1PPP/RNBQKB1R b KQkq - 1 2": {
+    "bestmove": "d7d5",
+    "score": 11,
+    "scoreType": "cp",
+    "pv": "d7d5 e4d5 e6d5 d2d4 b8c6 b1c3 g8f6 h2h3 f8d6 f1d3",
+    "source": "lichess"
+  },
+  "rnb1kbnr/ppp2ppp/4p3/3q4/8/5N2/PPPP1PPP/RNBQKB1R w KQkq - 0 4": {
+    "bestmove": "d2d4",
+    "score": 63,
+    "scoreType": "cp",
+    "pv": "d2d4 g8f6 f1e2 d5a5 b1c3 f8e7 f3e5 c7c6 d1d3 e8h8",
+    "source": "lichess"
+  },
+  "rnb1kbnr/ppp2ppp/4p3/3q4/2P5/5N2/PP1P1PPP/RNBQKB1R b KQkq - 0 4": {
+    "bestmove": "d5a5",
+    "score": 55,
+    "scoreType": "cp",
+    "pv": "d5a5 f1e2 g8f6 e1h1 c7c5 b1c3 f8e7 d2d4 c5d4 f3d4",
+    "source": "lichess"
+  },
+  "rnb1kbnr/pppq1ppp/4p3/8/2P5/5N2/PP1P1PPP/RNBQKB1R w KQkq - 1 5": {
+    "bestmove": "d2d4",
+    "score": 85,
+    "scoreType": "cp",
+    "pv": "d2d4 f8b4 c1d2 b4d2 d1d2 g8f6 b1c3 b7b6 e1a1 e8h8",
+    "source": "lichess"
+  },
+  "rnb1kbnr/pppq1ppp/4p3/2P5/8/5N2/PP1P1PPP/RNBQKB1R b KQkq - 0 5": {
+    "bestmove": "f8c5",
+    "score": -90,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "rnb1k1nr/pppq1ppp/4p3/2b5/8/5N2/PP1P1PPP/RNBQKB1R w KQkq - 0 6": {
+    "bestmove": "d2d4",
+    "score": -94,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "rnb1k1nr/p1pq1ppp/4p3/1pb5/2B5/5N2/PP1P1PPP/RNBQK2R w KQkq - 0 7": {
+    "bestmove": "c4e2",
+    "score": -115,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "rnb1k1nr/pppq1ppp/4p3/2b5/2B5/5N2/PP1P1PPP/RNBQK2R b KQkq - 1 6": {
+    "bestmove": "b8c6",
+    "score": 145,
+    "scoreType": "cp",
+    "pv": "b8c6 e1g1 g8e7 b1c3 c5d4 c3e2 d4f6 d2d4 b7b6 c1f4 c8b7 a1c1 e8g8 c4d3 a8d8 d3e4 e7d5 f4g3 c6e7 f3e5 f6e5 g3e5",
+    "source": "stockfish"
+  },
+  "rnb1k1nr/2pq1ppp/4p3/ppb5/8/1B3N2/PP1P1PPP/RNBQK2R w KQkq - 0 8": {
+    "bestmove": "d2d4",
+    "score": -69,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "rnb1k1nr/p1pq1ppp/4p3/1pb5/8/1B3N2/PP1P1PPP/RNBQK2R b KQkq - 1 7": {
+    "bestmove": "b8c6",
+    "score": -145,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "rnb1k1nr/2pq1ppp/4p3/ppb5/8/1BN2N2/PP1P1PPP/R1BQK2R b KQkq - 1 8": {
+    "bestmove": "a5a4",
+    "score": 118,
+    "scoreType": "cp",
+    "pv": "a5a4 b3c2 b8c6 c3b5 c6b4 b5c3 b4c2 d1c2 c8b7 c3e4 c5d6 d2d3 g8e7 e1g1 e8g8 c1e3 b7d5 f3d2 e7f5 d2c4 f8b8 a1b1",
+    "source": "stockfish"
+  },
+  "rnb1k1nr/2pq1ppp/4p3/1pb5/p7/1BN2N2/PP1P1PPP/R1BQK2R w KQkq - 0 9": {
+    "bestmove": "b3c2",
+    "score": -122,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "rnb1k1nr/2p1qppp/4p3/1pb1N3/p7/1BN5/PP1P1PPP/R1BQK2R w KQkq - 2 10": {
+    "bestmove": "b3c2",
+    "score": -59,
+    "scoreType": "cp",
+    "pv": "b3c2 c5d4 e5f3 d4b6 d2d4 g8f6 e1g1 e8g8 c2d3 c8b7 d3b5 a8a5 c1e3 f6d5 b5d3 d5e3 f2e3 a4a3 c3a4 b8c6 a4b6 c7b6 d1b1 c6b4 d3h7 g8h8 h7e4 b7e4 b1e4 a3b2",
+    "source": "stockfish"
+  },
+  "rnb1k1nr/2pq1ppp/4p3/1pb1N3/p7/1BN5/PP1P1PPP/R1BQK2R b KQkq - 1 9": {
+    "bestmove": "d7d6",
+    "score": 323,
+    "scoreType": "cp",
+    "pv": "d7d6 e1g1 d6e5 d2d4 c5d4 d1f3 a8a6 c1f4 d4c3 f4e5 c3e5 b3c2 g8f6 f3e2 b8d7 a1d1 e8g8 e2b5 a4a3 b2a3 e5d6 d1d4 a6b6 b5a5 h7h6",
+    "source": "stockfish"
+  },
+  "rnb1k1nr/2p1qppp/4p3/1pb1N2Q/p7/1BN5/PP1P1PPP/R1B1K2R b KQkq - 3 10": {
+    "bestmove": "a4b3",
+    "score": -389,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "rnb1k1nr/2p1qp1p/4p1p1/1pb1N2Q/p7/1BN5/PP1P1PPP/R1B1K2R w KQkq - 0 11": {
+    "bestmove": "h5f3",
+    "score": -91,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "rnb1k1nr/2p1qp1p/4p1pQ/1pb1N3/p7/1BN5/PP1P1PPP/R1B1K2R b KQkq - 1 11": {
+    "bestmove": "g8h6",
+    "score": -680,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "rnb1k2r/2p1qp1p/4p1pn/1pb1N3/p7/1BN5/PP1P1PPP/R1B1K2R w KQkq - 0 12": {
+    "bestmove": "b3c2",
+    "score": -681,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "rnb1k2r/2p1qp1p/4p1pn/1pb1N3/p4P2/1BN5/PP1P2PP/R1B1K2R b KQkq - 0 12": {
+    "bestmove": "a4b3",
+    "score": -858,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "rnb1k2r/2p1qp1p/4p1pn/1pb1N3/5P2/1PN5/1P1P2PP/R1B1K2R b KQkq - 0 13": {
+    "bestmove": "a8a1",
+    "score": -935,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "rnb1k2r/2p1qp1p/4p1pn/1pb1N3/5P2/1pN5/PP1P2PP/R1B1K2R w KQkq - 0 13": {
+    "bestmove": "h2h4",
+    "score": -860,
+    "scoreType": "cp",
+    "pv": "h2h4 c8b7 h4h5 g6h5 d2d3 h6f5 h1h5 b8d7 e5g4 f5d4 e1f1 b5b4 h5c5 e7c5 c3e4 b7e4 c1e3 b3a2",
+    "source": "stockfish"
+  },
+  "1nb1k2r/2p1qp1p/4p1pn/1pb1NP2/8/1PN5/1P1P2PP/2r1K2R w Kk - 0 15": {
+    "bestmove": "e1e2",
+    "score": -1203,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "1nb1k2r/2p1qp1p/4p1pn/1pb1N3/5P2/1PN5/1P1P2PP/r1B1K2R w Kk - 0 14": {
+    "bestmove": "e1d1",
+    "score": -962,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "1nb1k2r/2p1qp1p/4p1pn/1pb1NP2/8/1PN5/1P1P2PP/r1B1K2R b Kk - 0 14": {
+    "bestmove": "a1c1",
+    "score": 1554,
+    "scoreType": "cp",
+    "pv": "a1c1 e1e2 c1h1 c3d1 e6f5 d1e3 f7f6 h2h3 e7e5 e2f2 e5b2 f2e2 c5e7 e2d3 b8c6 b3b4 b2b1 d3e2 b1e1 e2d3 c6b4 d3c3",
+    "source": "stockfish"
+  },
+  "1nb1k2r/2p1qp1p/4p1pn/1pb1NP2/8/1PN5/1P1PK1PP/2r4R b k - 1 15": {
+    "bestmove": "c1h1",
+    "score": -1210,
+    "scoreType": "cp",
+    "source": "chess-api"
+  },
+  "1nb1k2r/2p1qp1p/4p1pn/1pb1NP2/8/1PN5/1P1PK1PP/7r w k - 0 16": {
+    "bestmove": "f5g6",
+    "score": -1204,
+    "scoreType": "cp",
+    "source": "chess-api"
+  }
+}

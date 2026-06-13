@@ -75,3 +75,4 @@ frontend/dist/
 
 # Ignorar el caché del análisis que vi en tu backend
 backend/analysis_cache.json
+.aider*
