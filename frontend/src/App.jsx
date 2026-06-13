@@ -481,19 +481,16 @@ function App() {
             modifiers: { lineWidth: 10 }
           });
           
-          // Add red arrow for user's bad move (mistake or blunder)
+          // Add red arrow for user's move when it differs from Stockfish (always visible when user move exists and differs)
           if (userMove && userMove.uci && userMove.uci !== uci) {
-            const classification = currentAnalysis.classification;
-            if (classification === 'mistake' || classification === 'blunder') {
-              const userOrig = userMove.uci.substring(0, 2);
-              const userDest = userMove.uci.substring(2, 4);
-              shapes.push({
-                orig: userOrig,
-                dest: userDest,
-                brush: 'red',
-                modifiers: { lineWidth: 10 }
-              });
-            }
+            const userOrig = userMove.uci.substring(0, 2);
+            const userDest = userMove.uci.substring(2, 4);
+            shapes.push({
+              orig: userOrig,
+              dest: userDest,
+              brush: 'red',
+              modifiers: { lineWidth: 10 }
+            });
           }
         }
       }
