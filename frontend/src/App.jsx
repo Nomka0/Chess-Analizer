@@ -236,7 +236,7 @@ function App() {
         
         setPlayerNames({ white: whiteName, black: blackName, whiteElo, blackElo, whiteAvatar, blackAvatar });
         
-        const moveString = pgnString.replace(/\[.*\]/g, '').replace(/\d+\./g, '').replace(/\*/g, '').replace(/0-1|1-0|1\/2-1\/2/g, '').trim();
+        const moveString = pgnString.replace(/\[.*\]/g own, '').replace(/\d+\./g, '').replace(/\*/g, '').replace(/0-1|1-0|1\/2-1\/2/g, '').trim();
         const moves = moveString.split(/\s+/);
         for (const move of moves) {
           if (!move) continue;
@@ -774,7 +774,7 @@ function App() {
             className="h-full bg-violet-500 transition-all duration-300 ease-out"
             style={{ width: `${analysisProgress}%` }}
           />
-        </div>
+        </div}
       )}
       
       {showImportModal && (
@@ -799,11 +799,11 @@ function App() {
               <div className="absolute inset-0 flex flex-col justify-between py-2 text-[10px] font-black pointer-events-none">
                   <div className="text-center mix-blend-difference text-white">
                       {boardOrientation === 'white' ? blackScoreStr : (evalScore > 0 ? `+${whiteScoreStr}` : whiteScoreStr)}
-                  </div}
+                  </div>
                   <div className="text-center mix-blend-difference text-white">
                       {boardOrientation === 'white' ? (evalScore > 0 ? `+${whiteScoreStr}` : whiteScoreStr) : blackScoreStr}
-                  </div}
-              </div}
+                  </div>
+              </div>
           </div>
           
           <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-2 sm:p-4 overflow-hidden text-center max-h-full">
@@ -812,16 +812,16 @@ function App() {
               <div className="flex items-center gap-2 truncate">
                 <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
                   {boardOrientation === 'white' ? (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?') : (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?')}
-                </div}
+                </div>
                 <span className="truncate">
                   {boardOrientation === 'white' ? playerNames.black : playerNames.white}
                   {boardOrientation === 'white' ? (playerNames.blackElo ? ` (${playerNames.blackElo})` : '') : (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '')}
                 </span>
-              </div}
+              </div>
               {accuracy.white > 0 && (
                 <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-violet-400 font-mono shrink-0">
                   Acc: {boardOrientation === 'white' ? accuracy.black : accuracy.white}%
-                </span}
+                </span>
               )}
             </div>
 
@@ -833,16 +833,16 @@ function App() {
               <div className="flex items-center gap-2 truncate">
                 <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
                   {boardOrientation === 'white' ? (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?') : (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?')}
-                </div}
+                </div>
                 <span className="truncate">
                   {boardOrientation === 'white' ? playerNames.white : playerNames.black}
                   {boardOrientation === 'white' ? (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '') : (playerNames.blackElo ? ` (${playerNames.blackElo})` : '')}
                 </span>
-              </div}
+              </div>
               {accuracy.white > 0 && (
                 <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-emerald-400 font-mono shrink-0">
                   Acc: {boardOrientation === 'white' ? accuracy.white : accuracy.black}%
-                </span}
+                </span>
               )}
             </div>
 
@@ -884,12 +884,12 @@ function App() {
                       navigateHistory={(target) => navigateHistory(target, false, false)}
                       historyContainerRef={historyContainerRef}
                   />
-              </div}
+              </div>
           </div>
 
-        </div}
+        </div>
       </main>
-    </div}
+    </div>
   );
 }
 
