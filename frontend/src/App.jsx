@@ -175,7 +175,6 @@ function App() {
   // Derive analysis from the main game's state (using the 'game' state variable for reactivity)
   const currentMainFen = game.fen();
 
-  const activeHistory = isAltBoardActive ? altGameRef.current.history({ verbose: true }) : history;
   const activeHistoryIndex = isAltBoardActive ? altHistoryIndex : historyIndex;
   
   const currentAnalysis = useMemo(() => {
@@ -208,6 +207,70 @@ function App() {
       .catch(console.error);
   }, []);
 
+  const navigateHistory = useCallback((target, isRelative = false, isAlt = isAltBoardActive) => {
+    setPreviewGame(null);
+    let newIndex;
+    const gameInstance = isAlt ? altGameRef.current : gameRef.current;
+    const hIdx = isAlt ? altHistoryIndex : historyIndex;
+    const setHIdx = isAlt ? setAltHistoryIndex : setHistoryIndex;
+    const setGState = isAlt ? _setAltGame : _setGame;
+
+    const totalMoves = gameInstance.history().length;
+    if (target === -Infinity) newIndex = -1;
+    else if (target === Infinity) newIndex = totalMoves - 1;
+    else if (isRelative) newIndex = Math.max(-1, Math.min(hIdx + target, totalMoves - 1));
+    else newIndex = target;
+
+    const historyAtTarget = gameInstance.history({ verbose: true }).slice(0, newIndex + 1);
+    const tempGame = new Chess();
+
+    // Reset to base position
+    const fullH = gameInstance.history({verbose: true});
+    const baseFen = fullH.length > 0 ? fullH[0].before : gameInstance.fen();
+    tempGame.load(baseFen);
+
+    for (const m of historyAtTarget) tempGame.move(m.san);
+
+    setGState(tempGame);
+    setHIdx(newIndex);
+  }, [isAltBoardActive, altHistoryIndex, historyIndex]);
+
+  const handleMouseMove = useCallback((e) => {
+    if (isResizingH.current) {
+        const newWidth = window.innerWidth - e.clientX;
+        if (newWidth > 400 && newWidth < 1000) setSidebarWidth(newWidth);
+    }
+    if (isResizingV.current) {
+        const sidebarRect = sidebarRef.current?.getBoundingClientRect();
+        if (sidebarRect) {
+            const newWidth = e.clientX - sidebarRect.left;
+            if (newWidth > 120 && newWidth < 400) setMoveListWidth(newWidth);
+        }
+    }
+  }, []);
+
+  const stopResizing = useCallback(function stopResizing() {
+    isResizingH.current = false;
+    isResizingV.current = false;
+    document.removeEventListener('mousemove', handleMouseMove);
+    document.removeEventListener('mouseup', stopResizing);
+    document.body.style.cursor = 'default';
+  }, [handleMouseMove]);
+
+  const startResizingH = useCallback(() => {
+    isResizingH.current = true;
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', stopResizing);
+    document.body.style.cursor = 'col-resize';
+  }, [handleMouseMove, stopResizing]);
+
+  const startResizingV = useCallback(() => {
+    isResizingV.current = true;
+    document.addEventListener('mousemove', handleMouseMove);
+    document.addEventListener('mouseup', stopResizing);
+    document.body.style.cursor = 'col-resize';
+  }, [handleMouseMove, stopResizing]);
+
   const fetchAvatar = useCallback(async (username) => {
     try {
       const response = await fetch(`https://api.chess.com/pub/player/${username}`);
@@ -228,15 +291,15 @@ function App() {
         const blackName = pgnString.match(/\[Black "(.*)"\]/)?.[1] || 'Black';
         const whiteElo = pgnString.match(/\[WhiteElo "(.*)"\]/)?.[1] || '';
         const blackElo = pgnString.match(/\[BlackElo "(.*)"\]/)?.[1] || '';
-        
+
         const [whiteAvatar, blackAvatar] = await Promise.all([
           fetchAvatar(whiteName),
           fetchAvatar(blackName)
         ]);
-        
+
         setPlayerNames({ white: whiteName, black: blackName, whiteElo, blackElo, whiteAvatar, blackAvatar });
-        
-        const moveString = pgnString.replace(/\[.*\]/g own, '').replace(/\d+\./g, '').replace(/\*/g, '').replace(/0-1|1-0|1\/2-1\/2/g, '').trim();
+
+        const moveString = pgnString.replace(/\[.*\]/g, '').replace(/\d+\./g, '').replace(/\*/g, '').replace(/0-1|1-0|1\/2-1\/2/g, '').trim();
         const moves = moveString.split(/\s+/);
         for (const move of moves) {
           if (!move) continue;
@@ -258,7 +321,7 @@ function App() {
       setShowImportModal(null);
       setFenInput('');
     } catch (e) { alert("Import Error: " + e.message); }
-  }, [fetchAvatar, syncGame]);
+  }, [fetchAvatar, syncGame, navigateHistory]);
   const handleAnalyzeMove = useCallback(async (index, specificHistory) => {
     const activeHistory = specificHistory || historyRef.current;
     if (index < 0 || index >= activeHistory.length) return;
@@ -294,70 +357,6 @@ function App() {
     } catch (e) { console.error(e); }
     finally { setIsLoading(false); }
   }, [selectedModel, language, userColor]);
-
-  const navigateHistory = useCallback((target, isRelative = false, isAlt = isAltBoardActive) => {
-    setPreviewGame(null);
-    let newIndex;
-    const gameInstance = isAlt ? altGameRef.current : gameRef.current;
-    const hIdx = isAlt ? altHistoryIndex : historyIndex;
-    const setHIdx = isAlt ? setAltHistoryIndex : setHistoryIndex;
-    const setGState = isAlt ? _setAltGame : _setGame;
-
-    const totalMoves = gameInstance.history().length;
-    if (target === -Infinity) newIndex = -1;
-    else if (target === Infinity) newIndex = totalMoves - 1;
-    else if (isRelative) newIndex = Math.max(-1, Math.min(hIdx + target, totalMoves - 1));
-    else newIndex = target;
-
-    const historyAtTarget = gameInstance.history({ verbose: true }).slice(0, newIndex + 1);
-    const tempGame = new Chess();
-
-    // Reset to base position
-    const fullH = gameInstance.history({verbose: true});
-    const baseFen = fullH.length > 0 ? fullH[0].before : gameInstance.fen();
-    tempGame.load(baseFen);
-
-    for (const m of historyAtTarget) tempGame.move(m.san);
-
-    setGState(tempGame);
-    setHIdx(newIndex);
-  }, [isAltBoardActive, altHistoryIndex, historyIndex]);
-
-  const stopResizing = useCallback(() => {
-    isResizingH.current = false;
-    isResizingV.current = false;
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', stopResizing);
-    document.body.style.cursor = 'default';
-  }, []);
-
-  const handleMouseMove = useCallback((e) => {
-    if (isResizingH.current) {
-        const newWidth = window.innerWidth - e.clientX;
-        if (newWidth > 400 && newWidth < 1000) setSidebarWidth(newWidth);
-    }
-    if (isResizingV.current) {
-        const sidebarRect = sidebarRef.current?.getBoundingClientRect();
-        if (sidebarRect) {
-            const newWidth = e.clientX - sidebarRect.left;
-            if (newWidth > 120 && newWidth < 400) setMoveListWidth(newWidth);
-        }
-    }
-  }, []);
-
-  const startResizingH = useCallback(() => {
-    isResizingH.current = true;
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', stopResizing);
-    document.body.style.cursor = 'col-resize';
-  }, [handleMouseMove, stopResizing]);
-
-  const startResizingV = useCallback(() => {
-    isResizingV.current = true;
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', stopResizing);
-    document.body.style.cursor = 'col-resize';
-  }, [handleMouseMove, stopResizing]);
 
 
   useEffect(() => {
@@ -451,7 +450,7 @@ function App() {
         cg.current = null;
       }
     };
-  }, [boardOrientation]); // Only re-initialize if orientation changes
+  }, [boardOrientation, currentFen]); // Re-sync if orientation or FEN changes
 
   useEffect(() => {
     if (cg.current) {
@@ -717,7 +716,7 @@ function App() {
         if (moves[i]) {
             try {
                 newAltGame.move(moves[i]);
-            } catch (e) {
+            } catch {
                 break;
             }
         }
@@ -735,7 +734,7 @@ function App() {
         if (moves[i]) {
             try {
                 clickedMoveGame.move(moves[i]);
-            } catch (e) {
+            } catch {
                 break;
             }
         }
@@ -774,7 +773,7 @@ function App() {
             className="h-full bg-violet-500 transition-all duration-300 ease-out"
             style={{ width: `${analysisProgress}%` }}
           />
-        </div}
+        </div>
       )}
       
       {showImportModal && (
