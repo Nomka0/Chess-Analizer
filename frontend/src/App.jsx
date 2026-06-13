@@ -890,9 +890,6 @@ function App() {
             </div>
 
             <div className="mt-1.5 flex gap-2 sm:gap-3 items-center shrink-0">
-              <button onClick={toggleBoard} className={`p-2 sm:p-3 rounded-lg transition ${isAltBoardActive ? 'bg-violet-600 hover:bg-violet-500' : 'bg-slate-800 hover:bg-slate-700'}`}>
-                {isAltBoardActive ? 'Alt' : 'Main'}
-              </button>
               <button onClick={() => navigateHistory(-Infinity, false, isAltBoardActive)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipBack className="w-4 h-4 sm:w-5 sm:h-5" /></button>
               <button onClick={() => navigateHistory(-1, true, isAltBoardActive)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
               <button onClick={handleFlip} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ArrowUpDown className="w-4 h-4 sm:w-5 sm:h-5" /></button>
