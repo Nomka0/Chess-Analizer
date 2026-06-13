@@ -1,4 +1,3 @@
-backend/server.js
 import express from 'express';
 import cors from 'cors';
 import { spawn } from 'child_process';
@@ -761,4 +760,60 @@ app.post('/api/analyze', async (req, res) => {
 app.post('/api/evaluate-all', async (req, res) => {
   const startApi = performance.now();
   const { fens } = req.body;
-  if (!f
+  if (!fens || !Array.isArray(fens)) {
+    return res.status(400).json({ error: "Missing or invalid 'fens' array" });
+  }
+
+  try {
+    // Process in parallel with controlled concurrency
+    const CONCURRENCY = 3;
+    const results = [];
+    
+    for (let i = 0; i < fens.length; i += CONCURRENCY) {
+      const chunk = fens.slice(i, i + CONCURRENCY);
+      const chunkPromises = chunk.map(async (fen) => {
+        const fenId = getFenId(fen);
+        try {
+          const evalResult = await getEngineEvaluation(fen, { depth: 22 });
+          return {
+            fen,
+            score: evalResult.score,
+            bestmove: evalResult.bestmove,
+            uciBestMove: evalResult.bestmove,
+            scoreType: evalResult.scoreType,
+            pv: evalResult.pv,
+            source: evalResult.source
+          };
+        } catch (err) {
+          console.error(`[Evaluate-All] Error for [${fenId}...]:`, err.message);
+          return {
+            fen,
+            score: 0,
+            bestmove: '',
+            uciBestMove: '',
+            scoreType: 'cp',
+            pv: '',
+            source: 'error',
+            error: err.message
+          };
+        }
+      });
+      
+      const chunkResults = await Promise.all(chunkPromises);
+      results.push(...chunkResults);
+    }
+
+    const apiDuration = (performance.now() - startApi).toFixed(1);
+    console.log(`[Perf: Evaluate-All] Batch of ${fens.length} FENs completed in ${apiDuration}ms`);
+    
+    res.json(results);
+  } catch (error) {
+    console.error('[Evaluate-All] Fatal error:', error);
+    res.status(500).json({ error: error.message });
+  }
+});
+
+app.listen(PORT, () => {
+  console.log(`Server running on port ${PORT}`);
+  pool.waitForAllReady().catch(console.error);
+});
