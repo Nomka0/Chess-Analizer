@@ -122,6 +122,7 @@ function App() {
 
   const historyRef = useRef([]);
   const resultsRef = useRef({});
+  const fullGameHistoryRef = useRef([]); // Complete game history (all moves from PGN)
 
   useEffect(() => { historyRef.current = history; }, [history]);
   useEffect(() => { resultsRef.current = batchAnalysisResults; }, [batchAnalysisResults]);
@@ -202,7 +203,8 @@ function App() {
       })
       .then(data => {
         setModels(data);
-        if (data.includes('qwen2.5:14b')) setSelectedModel('qwen2.5:14b');
+        if (data.includes('qwen2.5-coder:32b')) setSelectedModel('qwen2.5-coder:32b');
+        else if (data.includes('qwen2.5:14b')) setSelectedModel('qwen2.5:14b');
         else if (data.length > 0) setSelectedModel(data[0]);
       })
       .catch(console.error);
@@ -310,6 +312,8 @@ function App() {
           if (!tempGame.move(move)) throw new Error(`Invalid move: ${move}`);
         }
         gameRef.current = tempGame;
+        // Save complete game history for arrow rendering (yellow arrow = actual move played)
+        fullGameHistoryRef.current = tempGame.history({ verbose: true });
         syncGame();
         navigateHistory(-1); 
       } else {
@@ -317,6 +321,8 @@ function App() {
         if (fen.split(' ').length === 1) fen += ' w KQkq - 0 1';
         if (!tempGame.load(fen)) throw new Error("Invalid FEN");
         gameRef.current = tempGame;
+        // FEN import: no game history, clear full history
+        fullGameHistoryRef.current = [];
         syncGame();
         setHistoryIndex(-1);
       }
@@ -462,47 +468,62 @@ function App() {
     if (cg.current) {
       const shapes = [];
       
-      // Determine the user's current selected move if it exists
-      const activeGameInstance = isAltBoardActive ? altGameRef.current : gameRef.current;
-      const currentHistory = activeGameInstance.history({ verbose: true });
-      const activeIndex = isAltBoardActive ? altHistoryIndexRef.current : historyIndexRef.current;
+      // Use COMPLETE game history (from PGN load) for yellow arrow - contains all moves
+      // gameRef.current only has moves up to current position
+      const fullHistory = fullGameHistoryRef.current;
       
-      let userMove = null;
-      if (activeIndex >= 0 && activeIndex < currentHistory.length) {
-        userMove = currentHistory[activeIndex];
+      // Find which move in the FULL history led to the current position (currentFen)
+      // The currentFen is the position AFTER a move was played
+      // So we find the move whose 'after' FEN matches currentFen
+      let moveIndex = -1;
+      for (let i = 0; i < fullHistory.length; i++) {
+        if (fullHistory[i].after === currentFen) {
+          moveIndex = i;
+          break;
+        }
       }
-
-      // Stockfish's best move (always green)
-      if (currentAnalysis && currentAnalysis.uciBestMove) {
-        const uci = currentAnalysis.uciBestMove;
+      
+      // Also handle initial position (no moves played yet, index = -1)
+      if (moveIndex === -1 && currentFen === fullHistory[0]?.before) {
+        // At initial position, moveIndex stays -1, nextMove will be fullHistory[0]
+      }
+      
+      // Stockfish's best move (green arrow)
+      // batchAnalysisResults is keyed by the FEN *after* the move (the current position)
+      const analysisForCurrentPos = batchAnalysisResults[currentFen];
+      if (analysisForCurrentPos && analysisForCurrentPos.uciBestMove) {
+        const uci = analysisForCurrentPos.uciBestMove;
         if (uci.length >= 4) {
           const orig = uci.substring(0, 2);
           const dest = uci.substring(2, 4);
-          
-          // Add green arrow for Stockfish's suggestion
+
+          // Green arrow for Stockfish's suggestion
           shapes.push({
             orig,
             dest,
             brush: 'green',
             modifiers: { lineWidth: 10 }
           });
-          
-          // Add red arrow for user's move ONLY when it is a blunder or mistake
-          const isBadMove = currentAnalysis.classification === 'blunder' || currentAnalysis.classification === 'mistake';
-          if (userMove && isBadMove) {
-            const userOrig = userMove.from;
-            const userDest = userMove.to;
-            shapes.push({
-              orig: userOrig,
-              dest: userDest,
-              brush: 'red',
-              modifiers: { lineWidth: 10 }
-            });
-          }
         }
       }
 
-      // If alt board is active, show yellow arrows for alternative sequences
+      // Yellow arrow for the actual move THAT WAS PLAYED to reach this position
+      // moveIndex is the move that REACHED this position in the FULL game history
+      // Show that move (the one clicked in progress) as yellow arrow
+      const playedMove = fullHistory[moveIndex];
+      if (moveIndex >= 0 && playedMove && playedMove.from && playedMove.to) {
+        const userOrig = playedMove.from;
+        const userDest = playedMove.to;
+
+        shapes.push({
+          orig: userOrig,
+          dest: userDest,
+          brush: 'yellow',
+          modifiers: { lineWidth: 10 }
+        });
+      }
+
+      // If alt board is active, show arrows for alternative sequences
       if (isAltBoardActive) {
         // Priority 1: Show stored variation from user click
         if (altVariation && altVariation.moves.length > 0) {
@@ -511,9 +532,10 @@ function App() {
           // branchPointIndex is where the variation starts in alt game history
           const currentVariationIndex = altHistoryIndex - (altVariation.branchPointIndex ?? 0);
           
-          // Render remaining variation moves as yellow arrows
-          for (let i = Math.max(0, currentVariationIndex); i < altVariation.moves.length - 1; i++) {
-            const uci = altVariation.moves[i];
+          // Show only the CURRENT alt move as yellow arrow (not the full remaining variation)
+          // The current move in the variation is at currentVariationIndex
+          if (currentVariationIndex >= 0 && currentVariationIndex < altVariation.moves.length) {
+            const uci = altVariation.moves[currentVariationIndex];
             if (uci.length >= 4) {
               const orig = uci.substring(0, 2);
               const dest = uci.substring(2, 4);
@@ -522,7 +544,7 @@ function App() {
                   orig,
                   dest,
                   brush: 'yellow',
-                  modifiers: { lineWidth: 10, opacity: 0.7 }
+                  modifiers: { lineWidth: 10 }
                 });
               }
             }
@@ -671,6 +693,22 @@ function App() {
 
     setBatchAnalysisResults({ ...currentResults });
 
+    // Calculate accuracy for ALL moves by each player (not just bad moves / user color)
+    streamPayload.forEach(payload => {
+      if (payload.movingPlayer === 'w') {
+        wPerf += (100 - payload.impact);
+        wMoves++;
+      } else {
+        bPerf += (100 - payload.impact);
+        bMoves++;
+      }
+    });
+
+    setAccuracy({ 
+      white: wMoves ? (wPerf / wMoves).toFixed(1) : "0.0", 
+      black: bMoves ? (bPerf / bMoves).toFixed(1) : "0.0" 
+    });
+
     // RESTRICTED: Only analyze bad moves (inaccuracy, mistake, blunder)
     const errorClasses = ['inaccuracy', 'mistake', 'blunder'];
     
@@ -679,14 +717,6 @@ function App() {
         const moveColor = m.movingPlayer === 'w' ? 'white' : 'black';
         return moveColor === userColor && errorClasses.includes(m.classification);
     });
-
-    // If no bad moves, skip AI analysis entirely
-    if (filteredByColor.length === 0) {
-        setIsLoading(false);
-        setAnalysisProgress(100);
-        setAccuracy({ white: 0, black: 0 });
-        return;
-    }
 
     const criticalMoves = filteredByColor
         .sort((a, b) => b.impact - a.impact)
@@ -735,20 +765,8 @@ function App() {
                 bestmove: result.bestmove
             };
 
-            if (payload.movingPlayer === 'w') {
-                wPerf += (100 - payload.impact);
-                wMoves++;
-            } else {
-                bPerf += (100 - payload.impact);
-                bMoves++;
-            }
-
             setBatchAnalysisResults({ ...currentResults });
             setAnalysisProgress(Math.round((index / streamPayload.length) * 100));
-            setAccuracy({ 
-                white: wMoves ? (wPerf / wMoves).toFixed(1) : "0.0", 
-                black: bMoves ? (bPerf / bMoves).toFixed(1) : "0.0" 
-            });
         } catch (e) {
             console.error('Error parsing SSE message:', e);
         }
@@ -887,7 +905,8 @@ function App() {
 
       <main className="flex-grow relative h-0">
         <div className="absolute inset-0 flex overflow-hidden">
-          
+        
+          {/* Left sidebar - Win% bar vertical */}
           <div className={`w-10 flex flex-col border-r border-slate-800 z-10 justify-end relative ${boardOrientation === 'white' ? 'bg-slate-900' : 'bg-white'}`}>
               <div
                   className={`w-full transition-all duration-500 ${boardOrientation === 'white' ? 'bg-white' : 'bg-slate-900'}`}
@@ -902,48 +921,84 @@ function App() {
                   </div>
               </div>
           </div>
-          
+
           <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-2 sm:p-4 overflow-hidden text-center max-h-full">
             
-            <div className="mb-2 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center justify-between gap-2 shrink-0">
-              <div className="flex items-center gap-2 truncate">
-                <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
-                  {boardOrientation === 'white' ? (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?') : (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?')}
-                </div>
-                <span className="truncate">
-                  {boardOrientation === 'white' ? playerNames.black : playerNames.white}
-                  {boardOrientation === 'white' ? (playerNames.blackElo ? ` (${playerNames.blackElo})` : '') : (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '')}
-                </span>
-              </div>
-              {accuracy.white > 0 && (
-                <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-violet-400 font-mono shrink-0">
-                  Acc: {boardOrientation === 'white' ? accuracy.black : accuracy.white}%
-                </span>
+            {/* Top player (opponent) - [avatar] [name + elo] */}
+            <div className="mb-2 w-full max-w-[min(70vh, 70vw)] flex items-center gap-2 shrink-0">
+              {boardOrientation === 'white' ? (
+                // Black at top when White to move
+                <>
+                  <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
+                    {playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?'}
+                  </div>
+                  <span className="truncate font-bold text-xs sm:text-sm text-slate-300">
+                    {playerNames.black}
+                    {playerNames.blackElo ? ` (${playerNames.blackElo})` : ''}
+                  </span>
+                </>
+              ) : (
+                // White at top when Black to move
+                <>
+                  <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
+                    {playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?'}
+                  </div>
+                  <span className="truncate font-bold text-xs sm:text-sm text-slate-300">
+                    {playerNames.white}
+                    {playerNames.whiteElo ? ` (${playerNames.whiteElo})` : ''}
+                  </span>
+                </>
               )}
             </div>
 
+            {/* Chessboard */}
             <div className={`relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg shrink min-h-0 alt-board-container transition-all duration-300 ${isAltBoardActive ? 'ring-4 ring-violet-500/50' : 'ring-1 ring-slate-800'}`}>
               <div ref={boardRef} style={{ width: 'min(70vh, 70vw)', height: 'min(70vh, 70vw)' }} />
             </div>
 
-            <div className="mt-1 font-bold text-xs sm:text-sm text-slate-300 w-full max-w-[min(70vh, 70vw)] text-left flex items-center justify-between gap-2 shrink-0">
-              <div className="flex items-center gap-2 truncate">
-                <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
-                  {boardOrientation === 'white' ? (playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?') : (playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?')}
-                </div>
-                <span className="truncate">
-                  {boardOrientation === 'white' ? playerNames.white : playerNames.black}
-                  {boardOrientation === 'white' ? (playerNames.whiteElo ? ` (${playerNames.whiteElo})` : '') : (playerNames.blackElo ? ` (${playerNames.blackElo})` : '')}
-                </span>
-              </div>
-              {accuracy.white > 0 && (
-                <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-emerald-400 font-mono shrink-0">
-                  Acc: {boardOrientation === 'white' ? accuracy.white : accuracy.black}%
-                </span>
+            {/* Accuracy badges below board - centered together */}
+            <div className="mt-2 w-full max-w-[min(70vh, 70vw)] flex items-center justify-center gap-3 shrink-0">
+              {/* Top player accuracy (violet) */}
+              <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-violet-400 font-mono shrink-0 whitespace-nowrap">
+                Acc: {boardOrientation === 'white' ? accuracy.black : accuracy.white}%
+              </span>
+              {/* Separator */}
+              <span className="text-[11px] text-slate-500 shrink-0">|</span>
+              {/* Bottom player accuracy (emerald) */}
+              <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-emerald-400 font-mono shrink-0 whitespace-nowrap">
+                Acc: {boardOrientation === 'white' ? accuracy.white : accuracy.black}%
+              </span>
+            </div>
+            
+            {/* Bottom player (user) - [avatar] [name + elo] */}
+            <div className="mt-2 w-full max-w-[min(70vh, 70vw)] flex items-center gap-2 shrink-0">
+              {boardOrientation === 'white' ? (
+                // White at bottom when White to move
+                <>
+                  <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
+                    {playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?'}
+                  </div>
+                  <span className="truncate font-bold text-xs sm:text-sm text-slate-300">
+                    {playerNames.white}
+                    {playerNames.whiteElo ? ` (${playerNames.whiteElo})` : ''}
+                  </span>
+                </>
+              ) : (
+                // Black at bottom when Black to move
+                <>
+                  <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
+                    {playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?'}
+                  </div>
+                  <span className="truncate font-bold text-xs sm:text-sm text-slate-300">
+                    {playerNames.black}
+                    {playerNames.blackElo ? ` (${playerNames.blackElo})` : ''}
+                  </span>
+                </>
               )}
             </div>
 
-            <div className="mt-1.5 flex gap-2 sm:gap-3 items-center shrink-0">
+            {/* Navigation buttons */}
+            <div className="mt-2 flex gap-2 sm:gap-3 items-center shrink-0">
               <button onClick={() => navigateHistory(-Infinity, false, isAltBoardActive)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipBack className="w-4 h-4 sm:w-5 sm:h-5" /></button>
               <button onClick={() => navigateHistory(-1, true, isAltBoardActive)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
               <button onClick={handleFlip} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ArrowUpDown className="w-4 h-4 sm:w-5 sm:h-5" /></button>
@@ -966,7 +1021,7 @@ function App() {
                 onAnalyzeMove={handleAnalyzeMove}
                 isLoading={isLoading}
               />
-              
+             
               <div onMouseDown={startResizingV} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10 h-full" />
 
               <div style={{ width: `${moveListWidth}px` }} className="border-l border-slate-800 flex flex-col shrink-0 h-full">

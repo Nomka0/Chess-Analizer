@@ -619,10 +619,13 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
     const model = modelOverride || 'qwen2.5:14b';
     
     // 2. Ahora sí, el chequeo del Cache tiene acceso a la variable 'model'
-    const cached = getCachedAnalysis(fen, model, language);
-    if (cached) {
-        console.log(`[AI Analysis] ✅ Cache HIT for [${fenId}...] - returning cached analysis`);
-        return cached;
+    // Skip cache when userMove is provided (since userMove varies per analysis of same position)
+    if (!userMove) {
+        const cached = getCachedAnalysis(fen, model, language);
+        if (cached) {
+            console.log(`[AI Analysis] ✅ Cache HIT for [${fenId}...] - returning cached analysis`);
+            return cached;
+        }
     }
     console.log(`[AI Analysis] 🔍 Cache MISS for [${fenId}...] - proceeding with fresh analysis`);
 
@@ -668,11 +671,23 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
     const sanPv = evaluation.pv ? uciToSan(fen, evaluation.pv) : 'N/A';
     
     let sanUserMove = 'N/A';
+    let uciUserMove = null;
     if (userMove) {
         const unicodeMapping = { 'N': '♘', 'B': '♗', 'R': '♖', 'Q': '♕', 'K': '♔' };
         let san = userMove;
         if (unicodeMapping[san[0]]) san = unicodeMapping[san[0]] + san.substring(1);
         sanUserMove = `${prefix}${san}`;
+        
+        // Convert userMove SAN to UCI for frontend arrow rendering
+        try {
+            const move = chess.move(userMove);
+            if (move) {
+                uciUserMove = move.from + move.to + (move.promotion || '');
+                chess.undo(); // Undo to restore original position
+            }
+        } catch (e) {
+            console.warn(`Could not convert userMove ${userMove} to UCI:`, e.message);
+        }
     }
 
     let actualScore = bestScore;
@@ -781,10 +796,14 @@ async function performAnalysis(fen, modelOverride, language = 'es', moveTimeMs =
             language,
             pv: evaluation.pv,
             cpLoss,
-            classification: mappedClassification
+            classification: mappedClassification,
+            userMove: uciUserMove || userMove // Pass UCI for arrow rendering
         };
-
-        setCachedAnalysis(fen, model, result, language);
+        
+        // Only cache results without userMove (generic analysis)
+        if (!userMove) {
+            setCachedAnalysis(fen, model, result, language);
+        }
         return result;
 
     } catch (err) {
@@ -910,7 +929,8 @@ app.get('/api/analyze-stream', async (req, res) => {
           index, 
           result: { 
             analysis: result.analysis, 
-            bestmove: result.bestmove 
+            bestmove: result.bestmove,
+            userMove: result.userMove
           }, 
           error: null 
         });
