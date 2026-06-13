@@ -456,18 +456,40 @@ function App() {
     if (cg.current) {
       const shapes = [];
       
+      // Determine the user's current selected move if it exists
+      const activeGameInstance = isAltBoardActive ? altGameRef.current : gameRef.current;
+      const currentHistory = activeGameInstance.history({ verbose: true });
+      const activeIndex = isAltBoardActive ? altHistoryIndexRef.current : historyIndexRef.current;
+      
+      let userMove = null;
+      if (activeIndex >= 0 && activeIndex < currentHistory.length) {
+        userMove = currentHistory[activeIndex];
+      }
+
       // Calculate arrow from Stockfish's best move
       if (currentAnalysis && currentAnalysis.uciBestMove) {
         const uci = currentAnalysis.uciBestMove;
         if (uci.length >= 4) {
           const orig = uci.substring(0, 2);
           const dest = uci.substring(2, 4);
-          shapes.push({
-            orig,
-            dest,
-            brush: 'green', // Distinct color for engine suggestions
-            modifiers: { lineWidth: 10 }
-          });
+          
+          // If user move exists and differs from Stockfish's move, draw a red arrow
+          if (userMove && userMove.uci !== uci) {
+            shapes.push({
+              orig,
+              dest,
+              brush: 'red', // Red for wrong move
+              modifiers: { lineWidth: 10 }
+            });
+          } else {
+            // Green for correct/matching move (or no user move yet)
+            shapes.push({
+              orig,
+              dest,
+              brush: 'green', // Distinct color for engine suggestions
+              modifiers: { lineWidth: 10 }
+            });
+          }
         }
       }
 
@@ -477,7 +499,7 @@ function App() {
         animation: { enabled: true, duration: 250 }
       });
     }
-  }, [currentFen, currentAnalysis]); // Re-run when FEN or Analysis (with UCI) changes
+  }, [currentFen, currentAnalysis, isAltBoardActive, altHistoryIndex, historyIndex]); // Re-run when FEN or Analysis (with UCI) changes
 
   function handleFlip() {
     setBoardOrientation(prev => prev === 'white' ? 'black' : 'white');
