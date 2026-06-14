@@ -1,4 +1,4 @@
-import { useRef, useEffect, useMemo } from 'react';
+import { useRef, useEffect, useMemo, useState } from 'react';
 import ReactMarkdown from 'react-markdown';
 import rehypeRaw from 'rehype-raw';
 import { Sparkles } from 'lucide-react';
@@ -6,6 +6,8 @@ import { formatAIAnalysisText } from '../utils'; // <-- Asegúrate de que la rut
 
 const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveClick, activeHistoryIndex, isAltBoardActive, onAnalyzeMove, isLoading }) => {
   const containerRef = useRef(null);
+  // Track the specific variation that was clicked (by its unique data-variation + data-start-index)
+  const [activeVariationKey, setActiveVariationKey] = useState(null);
 
   // Parseamos el texto solo cuando cambia el análisis o el índice actual
   const parsedAnalysisText = useMemo(() => {
@@ -13,32 +15,32 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveC
     return formatAIAnalysisText(currentAnalysis.analysis, activeHistoryIndex);
   }, [currentAnalysis?.analysis, activeHistoryIndex]);
 
-  // Effect to highlight the active move in a variation
+  // Effect to highlight the active move ONLY in the clicked variation
   useEffect(() => {
-    if (!isAltBoardActive || !containerRef.current) return;
+    if (!isAltBoardActive || !containerRef.current || !activeVariationKey) return;
 
-    // Remove existing highlights
+    // Remove existing highlights from all variations
     const highlighted = containerRef.current.querySelectorAll('.active-variation-move');
     highlighted.forEach(el => el.classList.remove('active-variation-move', 'ring-2', 'ring-violet-500', 'bg-violet-500/20', 'rounded', 'px-1'));
 
-    // Find all variation wrappers
-    const wrappers = containerRef.current.querySelectorAll('.variation-wrapper');
-    wrappers.forEach(wrapper => {
-        const startIndex = parseInt(wrapper.getAttribute('data-start-index') || '-1');
-        if (startIndex === -1) return;
+    // Find ONLY the variation wrapper that was clicked
+    const wrapper = containerRef.current.querySelector(`.variation-wrapper[data-variation-key="${activeVariationKey}"]`);
+    if (!wrapper) return;
 
-        const moves = Array.from(wrapper.querySelectorAll('.clickable-move'));
-        moves.forEach((moveNode, index) => {
-            // If this move in the variation matches our active history index
-            if (startIndex + index === activeHistoryIndex) {
-                moveNode.classList.add('active-variation-move', 'ring-2', 'ring-violet-500', 'bg-violet-500/20', 'rounded', 'px-1');
-                
-                // Scroll into view if needed
-                moveNode.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-            }
-        });
+    const startIndex = parseInt(wrapper.getAttribute('data-start-index') || '-1');
+    if (startIndex === -1) return;
+
+    const moves = Array.from(wrapper.querySelectorAll('.clickable-move'));
+    moves.forEach((moveNode, index) => {
+        // If this move in the variation matches our active history index
+        if (startIndex + index === activeHistoryIndex) {
+            moveNode.classList.add('active-variation-move', 'ring-2', 'ring-violet-500', 'bg-violet-500/20', 'rounded', 'px-1');
+            
+            // Scroll into view if needed
+            moveNode.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+        }
     });
-  }, [activeHistoryIndex, isAltBoardActive, currentAnalysis]);
+  }, [activeHistoryIndex, isAltBoardActive, currentAnalysis, activeVariationKey]);
 
   const handleTextClick = (e) => {
     const moveNode = e.target.closest('.clickable-move');
@@ -50,10 +52,15 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveC
         const variationSequence = variationWrapper 
             ? variationWrapper.getAttribute('data-variation') 
             : moveNode.getAttribute('data-variation');
- 
+
         const startIndex = variationWrapper 
             ? variationWrapper.getAttribute('data-start-index') 
             : moveNode.getAttribute('data-start-index');
+
+        // Get unique variation key to scope highlighting to this specific variation
+        const variationKey = variationWrapper 
+            ? variationWrapper.getAttribute('data-variation-key') 
+            : moveNode.getAttribute('data-variation-key');
 
         let moveIndex = -1;
         if (variationWrapper) {
@@ -62,6 +69,11 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveC
         } else {
             // Si es un movimiento suelto, su índice en la "secuencia" siempre es 0
             moveIndex = 0;
+        }
+
+        // Set the active variation key to scope highlighting
+        if (variationKey) {
+            setActiveVariationKey(variationKey);
         }
 
         if (onVariationMoveClick) {

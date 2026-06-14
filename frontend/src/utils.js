@@ -3,8 +3,13 @@ import { Chess } from 'chess.js';
 /**
  * Advanced chess text parser.
  */
+let variationCounter = 0;
+
 export function formatAIAnalysisText(text, activeHistoryIndex = -1) {
     if (!text) return text;
+
+    // Reset counter for each new analysis
+    variationCounter = 0;
 
     // REGEX MAESTRA CORREGIDA:
     // Soporta piezas normales, unicodes y el span de íconos que genera el backend
@@ -50,16 +55,18 @@ export function formatAIAnalysisText(text, activeHistoryIndex = -1) {
         }
         
         moveOnlyRegex.lastIndex = 0;
+        // Capture the variation key for this variation before processing moves
+        const variationKey = `var-${variationCounter++}`;
         const parsedContent = content.replace(moveOnlyRegex, (moveMatch) => {
             // El data-move va limpio (Nf3), pero el moveMatch MANTIENE el ícono y el espacio visual (♘ f3)
             const dataMove = cleanChessSymbolsOnly(moveMatch.replace(/\s+/g, ''));
             if (/[a-h][1-8]/.test(dataMove) || dataMove.startsWith('O-O')) {
-                return `<span class="clickable-move cursor-pointer hover:text-violet-400 transition-colors" data-move="${dataMove}">${moveMatch}</span>`;
+                return `<span class="clickable-move cursor-pointer hover:text-violet-400 transition-colors" data-move="${dataMove}" data-variation-key="${variationKey}">${moveMatch}</span>`;
             }
             return moveMatch;
         });
         
-        return `${prefix}<div class="variation variation-wrapper" data-variation="${movesForVarLine.join(',')}" data-start-index="${startIndex}">${parsedContent}</div>`;
+        return `${prefix}<div class="variation variation-wrapper" data-variation-key="${variationKey}" data-variation="${movesForVarLine.join(',')}" data-start-index="${startIndex}">${parsedContent}</div>`;
     });
 
     // 2. Los movimientos fuera de las variantes vuelven a ser solo texto en negrita

@@ -1,0 +1,40 @@
+{
+  "traceId": "trace_1781400717772_49a6rlw",
+  "startedAt": "2026-06-14T01:31:57.772Z",
+  "metadata": {
+    "fen": "r1bqkbnr/pppnp1pp/8/3N1p2/3P4/8/PPP1PPPP/R1BQKBNR w KQkq - 0 4",
+    "model": "qwen2.5-coder:14b",
+    "language": "es",
+    "userMove": "Bf4",
+    "moveTimeMs": 200
+  },
+  "steps": [
+    {
+      "type": "thought",
+      "timestamp": "2026-06-14T01:31:57.772Z",
+      "content": "Starting ReAct agent for position r1bqkbnr/pppnp1...",
+      "context": {}
+    },
+    {
+      "type": "thought",
+      "timestamp": "2026-06-14T01:31:57.772Z",
+      "content": "Computing initial engine evaluation",
+      "context": {}
+    },
+    {
+      "type": "error",
+      "timestamp": "2026-06-14T01:32:27.777Z",
+      "error": "Stockfish 0 evaluation timed out",
+      "phase": "agentLoop"
+    }
+  ],
+  "completedAt": "2026-06-14T01:32:27.777Z",
+  "finalResult": {
+    "error": "Stockfish 0 evaluation timed out"
+  },
+  "error": {
+    "message": "Stockfish 0 evaluation timed out",
+    "phase": "agentLoop",
+    "timestamp": "2026-06-14T01:32:27.777Z"
+  }
+}
