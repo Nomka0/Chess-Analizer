@@ -62,14 +62,9 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveC
             ? variationWrapper.getAttribute('data-variation-key') 
             : moveNode.getAttribute('data-variation-key');
 
-        let moveIndex = -1;
-        if (variationWrapper) {
-            const allMoves = Array.from(variationWrapper.querySelectorAll('.clickable-move'));
-            moveIndex = allMoves.indexOf(moveNode);
-        } else {
-            // Si es un movimiento suelto, su índice en la "secuencia" siempre es 0
-            moveIndex = 0;
-        }
+        const moveIndex = variationWrapper
+            ? Array.from(variationWrapper.querySelectorAll('.clickable-move')).indexOf(moveNode)
+            : 0;
 
         // Set the active variation key to scope highlighting
         if (variationKey) {
@@ -79,35 +74,27 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveC
         if (onVariationMoveClick) {
             onVariationMoveClick(moveSan, variationSequence, moveIndex, parseInt(startIndex));
         }
-
-        // DEFER FOCUS: Wait for React's reconciliation and DOM updates to finish
-        setTimeout(() => {
-            if (containerRef.current) {
-                containerRef.current.focus();
-            }
-        }, 0);
     }
   };
 
   return (
     <div className="flex-grow flex flex-col overflow-hidden bg-[#0d1117]/30 h-full">
-      <div 
+      <div
         ref={containerRef}
-        className="flex-grow overflow-y-auto p-5 space-y-6 custom-scrollbar h-full" 
+        className="flex-grow overflow-y-auto p-5 space-y-6 custom-scrollbar h-full"
         onClick={handleTextClick}
-        tabIndex="-1"
       >
         {currentAnalysis ? (
           <div className="animate-fade-in pb-12">
             <div className="flex items-center justify-between mb-6 border-b border-slate-800/50 pb-4">
               <span className={`px-2.5 py-1 rounded text-[10px] font-black uppercase tracking-tighter shadow-sm ${
                   {
-                      best: 'bg-emerald-500 text-white',
-                      excellent: 'bg-emerald-400 text-black',
-                      good: 'bg-slate-700 text-white',
+                      best: 'bg-cyan-500 text-white',
+                      excellent: 'bg-emerald-500 text-white',
+                      good: 'bg-green-500 text-white',
                       inaccuracy: 'bg-yellow-500 text-black',
                       mistake: 'bg-orange-500 text-white',
-                      blunder: 'bg-rose-600 text-white'
+                      blunder: 'bg-red-600 text-white'
                   }[currentAnalysis.classification || 'good']
               }`}>
                   {t[currentAnalysis.classification || 'good']}

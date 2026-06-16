@@ -9,7 +9,6 @@ import Header from './components/Header';
 import AnalysisView from './components/AnalysisView';
 import MatchProgress from './components/MatchProgress';
 import { ArrowUpDown, ChevronLeft, ChevronRight, SkipBack, SkipForward } from 'lucide-react';
-import { cleanChessSymbolsOnly } from './utils';
 
 const markdownComponents = {
   h1: ({...props}) => <h1 className="text-lg font-black text-violet-400 mt-4 mb-2 border-b border-slate-800 pb-1 uppercase tracking-wider" {...props} />,
@@ -46,7 +45,7 @@ const translations = {
     matchProgress: "Match Progress",
     movesCount: "Count",
     analysis: "Analysis",
-    noAnalysis: "Sin análisis para esta posición.",
+    noAnalysis: "No analysis for this position.",
     suggested: "Suggested",
     intelligenceReady: "Intelligence Ready",
     startAnalysis: "Start Analysis",
@@ -70,7 +69,7 @@ const translations = {
     copyFen: "Copiar FEN",
     pasted: "¡Copiado!",
     loadData: "Cargar Datos",
-    pastePgn: "Pega el PGN aquí...",
+    pastePgn: "Pega tu PGN aquí...",
     matchProgress: "Progreso",
     movesCount: "Total",
     analysis: "Análisis",
@@ -96,12 +95,11 @@ function App() {
   const [game, _setGame] = useState(new Chess());
   const [altGame, _setAltGame] = useState(new Chess());
   const [isAltBoardActive, setIsAltBoardActive] = useState(false);
-  const [previewGame, setPreviewGame] = useState(null);
   const [history, setHistory] = useState([]);
   const [historyIndex, setHistoryIndex] = useState(-1);
   const historyIndexRef = useRef(-1);
   useEffect(() => { historyIndexRef.current = historyIndex; }, [historyIndex]);
-  
+
   const [altHistoryIndex, setAltHistoryIndex] = useState(-1);
   const altHistoryIndexRef = useRef(-1);
   useEffect(() => { altHistoryIndexRef.current = altHistoryIndex; }, [altHistoryIndex]);
@@ -111,19 +109,16 @@ function App() {
     whiteElo: '', blackElo: '',
     whiteAvatar: null, blackAvatar: null 
   });
-  const [language, setLanguage] = useState('es'); 
-  
-  const [accuracy, setAccuracy] = useState({ white: 0, black: 0 });
-  const [userColor, setUserColor] = useState('white'); // 'white' or 'black'
+  const [language, setLanguage] = useState('en');
+
+  const [userColor, setUserColor] = useState('white');
   const [isLoading, setIsLoading] = useState(false);
   const [analysisProgress, setAnalysisProgress] = useState(0);
   const [batchAnalysisResults, setBatchAnalysisResults] = useState({});
-  const [models, setModels] = useState([]);
 
   const historyRef = useRef([]);
   const resultsRef = useRef({});
-  const fullGameHistoryRef = useRef([]); // Complete game history (all moves from PGN)
-
+  const fullGameHistoryRef = useRef([]);
   useEffect(() => { historyRef.current = history; }, [history]);
   useEffect(() => { resultsRef.current = batchAnalysisResults; }, [batchAnalysisResults]);
 
@@ -132,36 +127,34 @@ function App() {
     setHistory(gameRef.current.history({ verbose: true }));
   }, []);
 
+  const centipawnsToWinProb = (cp) => 50 + 50 * Math.tanh(cp / 200);
 
-  const toggleBoard = useCallback(() => {
-      setIsAltBoardActive(prev => !prev);
+  const getClassification = useCallback((bestScore, actualScore, moveNumber, san) => {
+    const bestProb = centipawnsToWinProb(bestScore);
+    const actualProb = centipawnsToWinProb(actualScore);
+    const impact = Math.max(0, bestProb - actualProb); // percentage (0-100)
+
+    // Match backend classifyMove thresholds exactly:
+    // best: impact <= 0%
+    // excellent: impact <= 2%
+    // good: impact <= 5%
+    // inaccuracy: impact <= 10%
+    // mistake: impact <= 20%
+    // blunder: impact > 20%
+    if (moveNumber === 1 && (san === 'e4' || san === 'd4')) return 'excellent';
+    if (impact <= 0) return 'best';
+    if (impact <= 2.0) return 'excellent';
+    if (impact <= 5.0) return 'good';
+    if (impact <= 10.0) return 'inaccuracy';
+    if (impact <= 20.0) return 'mistake';
+    return 'blunder';
   }, []);
-
-  const centipawnsToWinProb = (cp) => 1 / (1 + Math.pow(10, -cp / 400));
-  
-  const getClassification = (impact, cpLoss, moveNumber, san) => {
-      if (moveNumber === 1 && (san === 'e4' || san === 'd4')) {
-          return 'excellent';
-      }
-      if (cpLoss < 30) {
-          return impact < 1.5 ? 'best' : 'excellent';
-      }
-      if (impact < 1.5) return 'best';
-      if (impact < 4.0) return 'excellent';
-      if (impact < 8.0) return 'good';
-      if (impact < 15.0) return 'inaccuracy';
-      if (impact < 25.0) return 'mistake';
-      return 'blunder';
-  };
 
   const [selectedModel, setSelectedModel] = useState('');
   const [copied, setCopied] = useState(false);
   const [showImportModal, setShowImportModal] = useState(null); 
   const [tempInput, setFenInput] = useState('');
-  
-  const [sidebarWidth, setSidebarWidth] = useState(950);
-  const [moveListWidth, setMoveListWidth] = useState(200);
-  const [altVariation, setAltVariation] = useState(null); // { moves: uci[], startFen: string }
+
   const isResizingH = useRef(false);
   const isResizingV = useRef(false);
 
@@ -169,31 +162,10 @@ function App() {
   const cg = useRef(null);
   const historyContainerRef = useRef(null);
   const sidebarRef = useRef(null);
-  
-  const t = translations[language];
-  const activeGame = isAltBoardActive ? altGame : game;
-  const currentFen = previewGame ? previewGame.fen() : activeGame.fen();
-  
-  // Derive analysis from the main game's state (using the 'game' state variable for reactivity)
-  const currentMainFen = game.fen();
-
-  const activeHistoryIndex = isAltBoardActive ? altHistoryIndex : historyIndex;
-  
-  const currentAnalysis = useMemo(() => {
-      return batchAnalysisResults[currentMainFen] || null;
-  }, [currentMainFen, batchAnalysisResults]);
-
-  const evalScore = currentAnalysis?.score || 0;
-  
-  const whiteScoreStr = (evalScore / 100).toFixed(1);
-  const blackScoreStr = (-evalScore / 100).toFixed(1);
-  
-  const winPercent = useMemo(() => {
-    return Math.max(5, Math.min(95, centipawnsToWinProb(evalScore) * 100));
-  }, [evalScore]);
+  const [models, setModels] = useState([]);
 
   useEffect(() => {
-    fetch('http://127.0.0.1:3000/api/models')
+    fetch('http://127.0.0.1:3001/api/models')
       .then(async res => {
         const contentType = res.headers.get("content-type");
         if (!res.ok || !contentType || !contentType.includes("application/json")) {
@@ -211,10 +183,6 @@ function App() {
   }, []);
 
   const navigateHistory = useCallback((target, isRelative = false, isAlt = isAltBoardActive) => {
-    setPreviewGame(null);
-    if (!isAlt) {
-      setAltVariation(null); // Clear variation when navigating main board
-    }
     let newIndex;
     const gameInstance = isAlt ? altGameRef.current : gameRef.current;
     const hIdx = isAlt ? altHistoryIndex : historyIndex;
@@ -230,7 +198,6 @@ function App() {
     const historyAtTarget = gameInstance.history({ verbose: true }).slice(0, newIndex + 1);
     const tempGame = new Chess();
 
-    // Reset to base position
     const fullH = gameInstance.history({verbose: true});
     const baseFen = fullH.length > 0 ? fullH[0].before : gameInstance.fen();
     tempGame.load(baseFen);
@@ -239,43 +206,45 @@ function App() {
 
     setGState(tempGame);
     setHIdx(newIndex);
-  }, [isAltBoardActive, altHistoryIndex, historyIndex]);
+  }, [isAltBoardActive, altHistoryIndex, historyIndex, _setGame, _setAltGame, setHistoryIndex, setAltHistoryIndex]);
+
+  const [sidebarWidth, setSidebarWidth] = useState(1400);
+  const [historyWidth, setHistoryWidth] = useState(220);
 
   const handleMouseMove = useCallback((e) => {
     if (isResizingH.current) {
         const newWidth = window.innerWidth - e.clientX;
-        if (newWidth > 400 && newWidth < 1000) setSidebarWidth(newWidth);
-    }
-    if (isResizingV.current) {
-        const sidebarRect = sidebarRef.current?.getBoundingClientRect();
-        if (sidebarRect) {
-            const newWidth = e.clientX - sidebarRect.left;
-            if (newWidth > 120 && newWidth < 400) setMoveListWidth(newWidth);
-        }
+        setSidebarWidth(Math.max(400, Math.min(newWidth, window.innerWidth * 0.6)));
+    } else if (isResizingV.current) {
+        const newWidth = window.innerWidth - e.clientX;
+        setHistoryWidth(Math.max(200, Math.min(newWidth, 450)));
     }
   }, []);
 
-  const stopResizing = useCallback(function stopResizing() {
+  const stopResizing = useCallback(() => {
     isResizingH.current = false;
     isResizingV.current = false;
-    document.removeEventListener('mousemove', handleMouseMove);
-    document.removeEventListener('mouseup', stopResizing);
     document.body.style.cursor = 'default';
-  }, [handleMouseMove]);
+  }, []);
+
+  useEffect(() => {
+    window.addEventListener('mousemove', handleMouseMove);
+    window.addEventListener('mouseup', stopResizing);
+    return () => {
+      window.removeEventListener('mousemove', handleMouseMove);
+      window.removeEventListener('mouseup', stopResizing);
+    };
+  }, [handleMouseMove, stopResizing]);
 
   const startResizingH = useCallback(() => {
     isResizingH.current = true;
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', stopResizing);
     document.body.style.cursor = 'col-resize';
-  }, [handleMouseMove, stopResizing]);
+  }, []);
 
   const startResizingV = useCallback(() => {
     isResizingV.current = true;
-    document.addEventListener('mousemove', handleMouseMove);
-    document.addEventListener('mouseup', stopResizing);
     document.body.style.cursor = 'col-resize';
-  }, [handleMouseMove, stopResizing]);
+  }, []);
 
   const fetchAvatar = useCallback(async (username) => {
     try {
@@ -312,7 +281,6 @@ function App() {
           if (!tempGame.move(move)) throw new Error(`Invalid move: ${move}`);
         }
         gameRef.current = tempGame;
-        // Save complete game history for arrow rendering (yellow arrow = actual move played)
         fullGameHistoryRef.current = tempGame.history({ verbose: true });
         syncGame();
         navigateHistory(-1); 
@@ -321,23 +289,20 @@ function App() {
         if (fen.split(' ').length === 1) fen += ' w KQkq - 0 1';
         if (!tempGame.load(fen)) throw new Error("Invalid FEN");
         gameRef.current = tempGame;
-        // FEN import: no game history, clear full history
         fullGameHistoryRef.current = [];
         syncGame();
         setHistoryIndex(-1);
       }
       setBatchAnalysisResults({});
-      setAccuracy({ white: 0, black: 0 });
-      setAltVariation(null); // Clear variation on new game
       setShowImportModal(null);
       setFenInput('');
     } catch (e) { alert("Import Error: " + e.message); }
   }, [fetchAvatar, syncGame, navigateHistory]);
+
   const handleAnalyzeMove = useCallback(async (index, specificHistory) => {
     const activeHistory = specificHistory || historyRef.current;
     if (index < 0 || index >= activeHistory.length) return;
     
-    // Check if it's the user's turn to analyze
     const move = activeHistory[index];
     const isWhiteMove = index % 2 === 0;
     const moveColor = isWhiteMove ? 'white' : 'black';
@@ -352,7 +317,7 @@ function App() {
 
     setIsLoading(true);
     try {
-        const res = await fetch('http://127.0.0.1:3000/api/analyze', {
+        const res = await fetch('http://127.0.0.1:3001/api/analyze', {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ 
@@ -369,55 +334,29 @@ function App() {
     finally { setIsLoading(false); }
   }, [selectedModel, language, userColor]);
 
+  const currentFen = useMemo(() => (isAltBoardActive ? altGame.fen() : game.fen()), [isAltBoardActive, altGame, game]);
 
-  useEffect(() => {
-    const handleGlobalClick = (e) => {
-      if (!isAltBoardActive) return;
-      const isAltBoardClick = e.target.closest('.alt-board-container');
-      const isVariationClick = e.target.closest('.variation-wrapper') || e.target.closest('.clickable-move');
-      if (!isAltBoardClick && !isVariationClick) {
-        setIsAltBoardActive(false);
-        setAltVariation(null);
-      }
-    };
-    window.addEventListener('mousedown', handleGlobalClick);
-    return () => window.removeEventListener('mousedown', handleGlobalClick);
-  }, [isAltBoardActive]);
+  const activeHistoryIndex = isAltBoardActive ? altHistoryIndex : historyIndex;
 
-  useEffect(() => {
-    const handleKeyDown = (e) => {
-      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
-      if (e.key === 'ArrowLeft') {
-        navigateHistory(-1, true, isAltBoardActive);
-      }
-      if (e.key === 'ArrowRight') {
-        navigateHistory(1, true, isAltBoardActive);
-      }
-    };
-    const handlePaste = (e) => {
-      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
-      const pastedText = e.clipboardData ? e.clipboardData.getData('text') : '';
-      if (pastedText) handleImportPgn(pastedText);
-    };
-    window.addEventListener('keydown', handleKeyDown);
-    window.addEventListener('paste', handlePaste);
-    return () => {
-      window.removeEventListener('keydown', handleKeyDown);
-      window.removeEventListener('paste', handlePaste);
-    };
-  }, [isAltBoardActive, navigateHistory, handleImportPgn]);
+  const currentAnalysis = useMemo(() => {
+    return batchAnalysisResults[currentFen] || null;
+  }, [currentFen, batchAnalysisResults]);
+
+  const displayWinPercent = useMemo(() => {
+    if (!currentAnalysis || currentAnalysis.score === undefined) return 50;
+    const score = currentAnalysis.score;
+    if (typeof score === 'string' && score.includes('#')) {
+      return score.includes('-') ? 0 : 100;
+    }
+    return Math.round(centipawnsToWinProb(score));
+  }, [currentAnalysis]);
 
   const onDrop = useCallback((from, to) => {
-    setPreviewGame(null);
     const tempGame = new Chess();
     const fullH = gameRef.current.history({verbose: true});
     const baseFen = fullH.length > 0 ? fullH[0].before : gameRef.current.fen();
     tempGame.load(baseFen);
-    
-    // If we're on the main board, apply moves up to historyIndex
-    // If we're on the alt board, we probably shouldn't allow dropping or handle it differently.
-    // For now, let's assume we drop on the board that is currently active.
-    
+
     const isAlt = isAltBoardActive;
     const gameInstance = isAlt ? altGameRef.current : gameRef.current;
     const hIdx = isAlt ? altHistoryIndex : historyIndex;
@@ -449,424 +388,343 @@ function App() {
   useEffect(() => {
     if (boardRef.current && !cg.current) {
       cg.current = Chessground(boardRef.current, {
-        fen: currentFen,
+        fen: game.fen(),
         orientation: boardOrientation,
-        movable: { free: false },
+        movable: {
+          free: false,
+          color: 'both',
+          dests: new Map()
+        },
         animation: { enabled: true, duration: 250 },
         events: { move: (from, to) => onDropRef.current?.(from, to) }
       });
     }
-    return () => {
-      if (cg.current) {
-        cg.current.destroy();
-        cg.current = null;
-      }
-    };
-  }, [boardOrientation, currentFen]); // Re-sync if orientation or FEN changes
+  }, [game, boardOrientation]);
 
   useEffect(() => {
     if (cg.current) {
-      const shapes = [];
-      
-      // Use COMPLETE game history (from PGN load) for yellow arrow - contains all moves
-      // gameRef.current only has moves up to current position
-      const fullHistory = fullGameHistoryRef.current;
-      
-      // Find which move in the FULL history led to the current position (currentFen)
-      // The currentFen is the position AFTER a move was played
-      // So we find the move whose 'after' FEN matches currentFen
-      let moveIndex = -1;
-      for (let i = 0; i < fullHistory.length; i++) {
-        if (fullHistory[i].after === currentFen) {
-          moveIndex = i;
-          break;
+        const shapes = [];
+        const fullHistory = fullGameHistoryRef.current;
+        let moveIndex = -1;
+        for (let i = 0; i < fullHistory.length; i++) {
+          if (fullHistory[i].after === currentFen) {
+            moveIndex = i;
+            break;
+          }
         }
-      }
-      
-      // Also handle initial position (no moves played yet, index = -1)
-      if (moveIndex === -1 && currentFen === fullHistory[0]?.before) {
-        // At initial position, moveIndex stays -1, nextMove will be fullHistory[0]
-      }
-      
-      // Stockfish's best move (green arrow)
-      // batchAnalysisResults is keyed by the FEN *after* the move (the current position)
-      const analysisForCurrentPos = batchAnalysisResults[currentFen];
-      if (analysisForCurrentPos && analysisForCurrentPos.uciBestMove) {
-        const uci = analysisForCurrentPos.uciBestMove;
-        if (uci.length >= 4) {
-          const orig = uci.substring(0, 2);
-          const dest = uci.substring(2, 4);
 
-          // Green arrow for Stockfish's suggestion
-          shapes.push({
-            orig,
-            dest,
-            brush: 'green',
-            modifiers: { lineWidth: 10 }
-          });
+        const analysisForCurrentPos = batchAnalysisResults[currentFen];
+        if (analysisForCurrentPos && analysisForCurrentPos.uciBestMove) {
+          const uci = analysisForCurrentPos.uciBestMove;
+          if (uci.length >= 4) {
+            const orig = uci.substring(0, 2);
+            const dest = uci.substring(2, 4);
+            shapes.push({ orig, dest, brush: 'green', modifiers: { lineWidth: 10 } });
+          }
         }
-      }
 
-      // Yellow arrow for the actual move THAT WAS PLAYED to reach this position
-      // moveIndex is the move that REACHED this position in the FULL game history
-      // Show that move (the one clicked in progress) as yellow arrow
-      const playedMove = fullHistory[moveIndex];
-      if (moveIndex >= 0 && playedMove && playedMove.from && playedMove.to) {
-        const userOrig = playedMove.from;
-        const userDest = playedMove.to;
+        const playedMove = fullHistory[moveIndex];
+        if (!isAltBoardActive && moveIndex >= 0 && playedMove && playedMove.from && playedMove.to) {
+          shapes.push({ orig: playedMove.from, dest: playedMove.to, brush: 'yellow', modifiers: { lineWidth: 10 } });
+        }
 
-        shapes.push({
-          orig: userOrig,
-          dest: userDest,
-          brush: 'yellow',
-          modifiers: { lineWidth: 10 }
+        // Show yellow arrow for the move that REACHED the current position on the alt board
+        if (isAltBoardActive) {
+          const altHistory = altGame.history({ verbose: true });
+          const lastAltMove = altHistory[altHistory.length - 1];
+          if (lastAltMove) {
+            shapes.push({
+              orig: lastAltMove.from,
+              dest: lastAltMove.to,
+              brush: 'yellow',
+              modifiers: { lineWidth: 10 }
+            });
+          }
+        }
+
+        const gameInstance = isAltBoardActive ? altGame : game;
+        const dests = new Map();
+        const allSquares = [
+          'a8', 'b8', 'c8', 'd8', 'e8', 'f8', 'g8', 'h8',
+          'a7', 'b7', 'c7', 'd7', 'e7', 'f7', 'g7', 'h7',
+          'a6', 'b6', 'c6', 'd6', 'e6', 'f6', 'g6', 'h6',
+          'a5', 'b5', 'c5', 'd5', 'e5', 'f5', 'g5', 'h5',
+          'a4', 'b4', 'c4', 'd4', 'e4', 'f4', 'g4', 'h4',
+          'a3', 'b3', 'c3', 'd3', 'e3', 'f3', 'g3', 'h3',
+          'a2', 'b2', 'c2', 'd2', 'e2', 'f2', 'g2', 'h2',
+          'a1', 'b1', 'c1', 'd1', 'e1', 'f1', 'g1', 'h1'
+        ];
+        allSquares.forEach(s => {
+          const ms = gameInstance.moves({ square: s, verbose: true });
+          if (ms.length) dests.set(s, ms.map(m => m.to));
         });
-      }
 
-      // If alt board is active, show arrows for alternative sequences
-      if (isAltBoardActive) {
-        // Priority 1: Show stored variation from user click
-        if (altVariation && altVariation.moves.length > 0) {
-          // currentVariationIndex = how far into the variation we are on the alt board
-          // altHistoryIndex is the absolute index in alt game history
-          // branchPointIndex is where the variation starts in alt game history
-          const currentVariationIndex = altHistoryIndex - (altVariation.branchPointIndex ?? 0);
+        cg.current.set({
+            fen: currentFen,
+            orientation: boardOrientation,
+            drawable: { shapes },
+            movable: { dests, free: false, color: 'both' },
+            lastMove: history.length > 0 && activeHistoryIndex >= 0 && !isAltBoardActive
+                ? [history[activeHistoryIndex].from, history[activeHistoryIndex].to]
+                : undefined
+        });
+    }
+  }, [currentFen, boardOrientation, history, activeHistoryIndex, isAltBoardActive, batchAnalysisResults, game, altGame]);
+
+  const accuracy = useMemo(() => {
+    const calcAcc = (moves) => {
+        const analyzed = moves.filter(m => batchAnalysisResults[m.after]);
+        if (analyzed.length === 0) return 0;
+        const sum = analyzed.reduce((acc, m) => {
+            const res = batchAnalysisResults[m.after];
+            if (!res || !res.classification) return acc + 100;
+            const values = { best: 100, excellent: 95, good: 80, inaccuracy: 60, mistake: 30, blunder: 0 };
+            return acc + (values[res.classification] ?? 100);
+        }, 0);
+        return Math.round(sum / analyzed.length);
+    };
+    
+    return {
+        white: calcAcc(history.filter((_, i) => i % 2 === 0)),
+        black: calcAcc(history.filter((_, i) => i % 2 !== 0))
+    };
+  }, [batchAnalysisResults, history]);
+
+  const whiteScoreStr = useMemo(() => {
+    if (!currentAnalysis || currentAnalysis.score === undefined) return "0.0";
+    const score = currentAnalysis.score;
+    if (typeof score === 'string' && score.includes('#')) return score;
+    const val = (score / 100).toFixed(1);
+    return val > 0 ? `+${val}` : val;
+  }, [currentAnalysis]);
+
+  const blackScoreStr = useMemo(() => {
+    if (!currentAnalysis || currentAnalysis.score === undefined) return "0.0";
+    const score = currentAnalysis.score;
+    if (typeof score === 'string' && score.includes('#')) {
+      return score.startsWith('#') ? `-#${score.slice(1)}` : (score.startsWith('-#') ? `#${score.slice(2)}` : score);
+    }
+    const val = (-score / 100).toFixed(1);
+    return val > 0 ? `+${val}` : val;
+  }, [currentAnalysis]);
+
+  const calculateEstimatedElo = useCallback((acc) => {
+    if (!acc) return 400;
+    return Math.round(400 + acc * 22);
+  }, []);
+
+  const handleFlip = useCallback(() => {
+    setBoardOrientation(prev => prev === 'white' ? 'black' : 'white');
+  }, []);
+
+  const handleImport = useCallback(() => {
+    handleImportPgn(tempInput);
+  }, [handleImportPgn, tempInput]);
+
+  const onVariationMoveClick = useCallback((moveSan, variationSequence, moveIndex, startIndex) => {
+    const sequence = variationSequence.split(',');
+    const movesToApply = sequence.slice(0, moveIndex + 1);
+    
+    const tempGame = new Chess();
+    const mainHistory = gameRef.current.history({ verbose: true });
+    const baseHistory = mainHistory.slice(0, startIndex);
+    
+    const initialFen = fullGameHistoryRef.current.length > 0 ? fullGameHistoryRef.current[0].before : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    tempGame.load(initialFen);
+    
+    for (const m of baseHistory) tempGame.move(m.san);
+    
+    for (const m of movesToApply) {
+      try {
+        tempGame.move(m);
+      } catch (e) {
+        console.warn("Could not apply variation move", m, e);
+        break;
+      }
+    }
+    
+    altGameRef.current = tempGame;
+    _setAltGame(new Chess(tempGame.fen()));
+    setAltHistoryIndex(startIndex + moveIndex);
+    setIsAltBoardActive(true);
+  }, []);
+
+  const handleAnalyzeAllPgn = useCallback(async () => {
+    if (isLoading || history.length === 0) return;
+    setIsLoading(true);
+    setAnalysisProgress(0);
+
+    try {
+      // Step 1: Get engine evaluations for ALL positions in the game
+      const allFens = [
+        fullGameHistoryRef.current.length > 0 ? fullGameHistoryRef.current[0].before : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
+        ...history.map(m => m.after)
+      ];
+
+      const evalRes = await fetch('http://127.0.0.1:3001/api/evaluate-all', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fens: allFens })
+      });
+      
+      if (!evalRes.ok) throw new Error("Failed to fetch evaluations");
+      const engineResults = await evalRes.json();
+      
+      // Map results by FEN for easy lookup
+      const evalMap = {};
+      engineResults.forEach(res => {
+        evalMap[res.fen] = res;
+      });
+
+      // Step 2: Classify each move and filter those that need AI analysis
+      const currentResults = {};
+      const movesToAI = [];
+
+      history.forEach((move, i) => {
+        const prevFen = i === 0 
+          ? (fullGameHistoryRef.current.length > 0 ? fullGameHistoryRef.current[0].before : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
+          : history[i-1].after;
+        
+        const targetFen = move.after;
+        const prevEval = evalMap[prevFen];
+        const currentEval = evalMap[targetFen];
+
+        if (prevEval && currentEval) {
+          const isWhiteMove = i % 2 === 0;
+          const bestScore = prevEval.score; // Stockfish score for side to move
+          // currentEval.score is for the NEXT player, so negate it for moving player's perspective
+          const actualScore = -currentEval.score; 
           
-          // Show only the CURRENT alt move as yellow arrow (not the full remaining variation)
-          // The current move in the variation is at currentVariationIndex
-          if (currentVariationIndex >= 0 && currentVariationIndex < altVariation.moves.length) {
-            const uci = altVariation.moves[currentVariationIndex];
-            if (uci.length >= 4) {
-              const orig = uci.substring(0, 2);
-              const dest = uci.substring(2, 4);
-              if (orig.length === 2 && dest.length === 2) {
-                shapes.push({
-                  orig,
-                  dest,
-                  brush: 'yellow',
-                  modifiers: { lineWidth: 10 }
-                });
-              }
-            }
-          }
-        } 
-        // Priority 2: Fallback to PV from current analysis (first move only)
-        else if (currentAnalysis && currentAnalysis.pv) {
-          const pvMoves = currentAnalysis.pv.split(' ');
-          if (pvMoves.length >= 1) {
-            const uci = pvMoves[0];
-            if (uci.length >= 4) {
-              const orig = uci.substring(0, 2);
-              const dest = uci.substring(2, 4);
-              if (orig.length === 2 && dest.length === 2) {
-                shapes.push({
-                  orig,
-                  dest,
-                  brush: 'yellow',
-                  modifiers: { lineWidth: 10 }
-                });
-              }
-            }
+          const classification = getClassification(bestScore, actualScore, Math.floor(i/2) + 1, move.san);
+          const cpLoss = Math.max(0, bestScore - actualScore);
+
+          currentResults[targetFen] = {
+            score: isWhiteMove ? actualScore : -actualScore, // Store relative to white for display
+            classification,
+            bestmove: prevEval.bestmove,
+            uciBestMove: prevEval.bestmove,
+            analysis: '...',
+            cpLoss
+          };
+
+          // Filter: Only AI analyze user moves that are inaccuracy/mistake/blunder
+          const moveColor = isWhiteMove ? 'white' : 'black';
+          const isBadMove = ['inaccuracy', 'mistake', 'blunder'].includes(classification);
+          
+          if (moveColor === userColor && isBadMove) {
+            movesToAI.push({
+              index: i,
+              fen: prevFen,
+              userMove: move.san,
+              classification,
+              movingPlayer: moveColor
+            });
           }
         }
+      });
+
+      setBatchAnalysisResults(currentResults);
+
+      if (movesToAI.length === 0) {
+        setIsLoading(false);
+        setAnalysisProgress(100);
+        return;
       }
 
-      cg.current.set({ 
-        fen: currentFen,
-        drawable: { shapes },
-        animation: { enabled: true, duration: 250 }
-      });
+      // Step 3: Stream AI analysis for the filtered bad moves
+      const fensParam = JSON.stringify(movesToAI);
+      const url = `http://127.0.0.1:3001/api/analyze-stream?fens=${encodeURIComponent(fensParam)}&model=${selectedModel}&language=${language}`;
+
+      const eventSource = new EventSource(url);
+
+      eventSource.onmessage = (event) => {
+        if (event.data === '[DONE]') {
+          eventSource.close();
+          setIsLoading(false);
+          setAnalysisProgress(100);
+          return;
+        }
+
+        try {
+          const data = JSON.parse(event.data);
+          if (data.index !== undefined && data.result) {
+            const targetFen = history[data.index].after;
+            setBatchAnalysisResults(prev => ({
+              ...prev,
+              [targetFen]: {
+                ...prev[targetFen],
+                analysis: data.result.analysis,
+                bestmove: data.result.bestmove,
+                classification: data.result.classification || prev[targetFen].classification
+              }
+            }));
+            
+            const progress = Math.round(((movesToAI.findIndex(m => m.index === data.index) + 1) / movesToAI.length) * 100);
+            setAnalysisProgress(progress);
+          }
+        } catch (e) {
+          console.error("Error parsing SSE data", e);
+        }
+      };
+
+      eventSource.onerror = (err) => {
+        console.error("SSE Error", err);
+        eventSource.close();
+        setIsLoading(false);
+      };
+
+    } catch (err) {
+      console.error("Analysis failed:", err);
+      setIsLoading(false);
     }
-  }, [currentFen, currentAnalysis, isAltBoardActive, altHistoryIndex, historyIndex, altVariation]); // Re-run when FEN or Analysis (with UCI) changes
+  }, [history, isLoading, userColor, selectedModel, language, getClassification]);
 
-  function handleFlip() {
-    setBoardOrientation(prev => prev === 'white' ? 'black' : 'white');
-  }
+  useEffect(() => {
+    const handleGlobalClick = (e) => {
+      if (!isAltBoardActive) return;
+      const isAltBoardClick = e.target.closest('.alt-board-container');
+      const isVariationClick = e.target.closest('.variation-wrapper') || e.target.closest('.clickable-move');
+      if (!isAltBoardClick && !isVariationClick) {
+        setIsAltBoardActive(false);
+      }
+    };
+    window.addEventListener('mousedown', handleGlobalClick);
+    return () => window.removeEventListener('mousedown', handleGlobalClick);
+  }, [isAltBoardActive]);
 
-  function handleCopyFen() {
+  useEffect(() => {
+    const handleKeyDown = (e) => {
+      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+      if (e.key === 'ArrowLeft') {
+        navigateHistory(-1, true, isAltBoardActive);
+      }
+      if (e.key === 'ArrowRight') {
+        navigateHistory(1, true, isAltBoardActive);
+      }
+    };
+    const handlePaste = (e) => {
+      if (e.target.tagName === 'TEXTAREA' || e.target.tagName === 'INPUT') return;
+      const pastedText = e.clipboardData ? e.clipboardData.getData('text') : '';
+      if (pastedText) handleImportPgn(pastedText);
+    };
+    window.addEventListener('keydown', handleKeyDown);
+    window.addEventListener('paste', handlePaste);
+    return () => {
+      window.removeEventListener('keydown', handleKeyDown);
+      window.removeEventListener('paste', handlePaste);
+    };
+  }, [isAltBoardActive, navigateHistory, handleImportPgn]);
+
+  const handleCopyFen = useCallback(() => {
     navigator.clipboard.writeText(currentFen);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
-  }
+  }, [currentFen]);
 
-  function handleImport() {
-    if (!tempInput.trim()) return;
-    handleImportPgn(tempInput);
-    setBatchAnalysisResults({});
-    setShowImportModal(null);
-    setFenInput('');
-  }
-
-  async function handleAnalyzeAllPgn() {
-    setIsLoading(true);
-    setAnalysisProgress(0);
-    
-    const fullH = gameRef.current.history({verbose: true});
-    const baseFen = fullH.length > 0 ? fullH[0].before : gameRef.current.fen();
-    const tempGame = new Chess(baseFen);
-    
-    const positions = [{ fen: tempGame.fen() }];
-    for (const move of history) {
-        tempGame.move(move);
-        positions.push({ fen: tempGame.fen(), san: move.san });
-    }
-
-    const allEvals = {};
-    const CHUNK_SIZE = 10;
-    const currentResults = {};
-
-    currentResults[positions[0].fen] = { score: 0, classification: 'best', analysis: '', bestmove: '' };
-
-    for (let i = 0; i < positions.length; i += CHUNK_SIZE) {
-        const chunk = positions.slice(i, i + CHUNK_SIZE);
-        try {
-            const evals = await (await fetch('http://127.0.0.1:3000/api/evaluate-all', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ fens: chunk.map(p => p.fen) })
-            })).json();
-            
-            evals.forEach((ev, idx) => {
-                const fen = chunk[idx].fen;
-                allEvals[fen] = {
-                    score: ev.score,
-                    bestmove: ev.bestmove,
-                    uciBestMove: ev.bestmove
-                };
-                
-                if (i + idx > 0) {
-                    const pos = chunk[idx];
-                    const prevPos = positions[i + idx - 1];
-                    const currentGame = new Chess(pos.fen);
-                    const uiScore = currentGame.turn() === 'b' ? -(ev.score || 0) : (ev.score || 0);
-                    
-                    const suggestedMoveFromPrev = allEvals[prevPos.fen]?.bestmove || '...';
-                    const uciBestMoveFromPrev = allEvals[prevPos.fen]?.uciBestMove;
-
-                    currentResults[pos.fen] = {
-                        score: uiScore,
-                        classification: '...', 
-                        analysis: 'Analizando con IA...',
-                        bestmove: suggestedMoveFromPrev,
-                        uciBestMove: uciBestMoveFromPrev
-                    };
-                }
-            });
-            setBatchAnalysisResults({ ...currentResults });
-        } catch (e) { console.error(e); }
-    }
-
-    let wPerf = 0, bPerf = 0, wMoves = 0, bMoves = 0;
-
-    const streamPayload = positions.slice(1).map((pos, idx) => {
-        const prevPos = positions[idx];
-        const prevGame = new Chess(prevPos.fen);
-        const movingPlayer = prevGame.turn();
-
-        const prevEval = allEvals[prevPos.fen];
-        // Scores from the perspective of the moving player
-        const bestScore = prevEval?.score || 0;
-        const bestProb = centipawnsToWinProb(bestScore);
-        let actualScore = allEvals[pos.fen]?.score || 0;
-        // After the move, it's opponent's turn, so negate to get moving player's perspective
-        actualScore = -actualScore;
-
-        const actualProb = centipawnsToWinProb(actualScore);
-        const impact = Math.max(0, bestProb - actualProb) * 100;
-        // cpLoss from moving player's perspective: positive when position worsened
-        const cpLoss = Math.max(0, bestScore - actualScore);
-        const moveNumber = Math.ceil((idx + 1) / 2);
-        const classification = getClassification(impact, cpLoss, moveNumber, pos.san);
-
-        currentResults[pos.fen].classification = classification;
-
-        return {
-            fen: prevPos.fen,
-            userMove: pos.san,
-            classification,
-            index: idx + 1,
-            impact,
-            movingPlayer,
-            playerColor: userColor === 'white' ? 'w' : 'b'
-        };
-    });
-
-    setBatchAnalysisResults({ ...currentResults });
-
-    // Calculate accuracy for ALL moves by each player (not just bad moves / user color)
-    streamPayload.forEach(payload => {
-      if (payload.movingPlayer === 'w') {
-        wPerf += (100 - payload.impact);
-        wMoves++;
-      } else {
-        bPerf += (100 - payload.impact);
-        bMoves++;
-      }
-    });
-
-    setAccuracy({ 
-      white: wMoves ? (wPerf / wMoves).toFixed(1) : "0.0", 
-      black: bMoves ? (bPerf / bMoves).toFixed(1) : "0.0" 
-    });
-
-    // RESTRICTED: Only analyze bad moves (inaccuracy, mistake, blunder)
-    const errorClasses = ['inaccuracy', 'mistake', 'blunder'];
-    
-    // Filter streamPayload to ONLY include moves from userColor that are BAD moves
-    const filteredByColor = streamPayload.filter(m => {
-        const moveColor = m.movingPlayer === 'w' ? 'white' : 'black';
-        return moveColor === userColor && errorClasses.includes(m.classification);
-    });
-
-    const criticalMoves = filteredByColor
-        .sort((a, b) => b.impact - a.impact)
-        .slice(0, 7);
-
-    const filteredPayload = criticalMoves
-        .sort((a, b) => a.index - b.index);
-
-    const queryParams = new URLSearchParams({
-        fens: JSON.stringify(filteredPayload),
-        model: selectedModel,
-        language,
-        moveTime: 200
-    });
-
-    const eventSource = new EventSource(`http://127.0.0.1:3000/api/analyze-stream?${queryParams.toString()}`);
-
-    eventSource.onmessage = (event) => {
-        if (event.data === '[DONE]') {
-            eventSource.close();
-            setIsLoading(false);
-            setAnalysisProgress(100);
-            
-            setAccuracy({ 
-                white: wMoves ? (wPerf / wMoves).toFixed(1) : "0.0", 
-                black: bMoves ? (bPerf / bMoves).toFixed(1) : "0.0" 
-            });
-            return;
-        }
-
-        try {
-            const data = JSON.parse(event.data);
-            const { index, result, error } = data; 
-            
-            if (error) {
-                console.error(`Error at move ${index}:`, error);
-                return;
-            }
-
-            const pos = positions[index];
-            const payload = streamPayload[index - 1];
-
-            currentResults[pos.fen] = {
-                ...currentResults[pos.fen],
-                analysis: result.analysis,
-                bestmove: result.bestmove
-            };
-
-            setBatchAnalysisResults({ ...currentResults });
-            setAnalysisProgress(Math.round((index / streamPayload.length) * 100));
-        } catch (e) {
-            console.error('Error parsing SSE message:', e);
-        }
-    };
-
-    eventSource.onerror = (err) => {
-        console.error('SSE Error:', err);
-        eventSource.close();
-        setIsLoading(false);
-    };
-  }
-
-  const onVariationMoveClick = useCallback((moveSan, variationSequence, moveIndex = -1, startIndex = -1) => {
-    // 1. Force Alt Board to be active
-    setIsAltBoardActive(true);
-
-    // Get the currently viewed history index from the refs
-    const hIndex = historyIndexRef.current;
-    
-    // 2. Determine the starting point for this variation.
-    const currentIndex = startIndex >= 0 ? startIndex : hIndex;
-    
-    // 3. Create a new alt game instance based on the base position of the main game
-    const fullHistory = gameRef.current.history({ verbose: true });
-    const mainBaseFen = fullHistory.length > 0 ? fullHistory[0].before : gameRef.current.fen();
-    const newAltGame = new Chess(mainBaseFen);
-
-    // 4. Replay moves from the MAIN game UP TO the resolved base index
-    const movesBefore = fullHistory.slice(0, currentIndex);
-    
-    // Ensure the newAltGame is loaded with the base FEN before replaying
-    newAltGame.load(mainBaseFen);
-    for (const m of movesBefore) {
-        newAltGame.move(m.san);
-    }
-
-    // 5. Parse the variation sequence and apply ALL moves to the alt game
-    // This allows the user to navigate the entire suggested continuation by keyboard.
-    const cleanMoveSan = cleanChessSymbolsOnly(moveSan);
-    const moves = variationSequence
-        ? variationSequence.split(',').map(m => cleanChessSymbolsOnly(m.trim()))
-        : [cleanMoveSan];
-
-    const targetMoveIndex = moveIndex >= 0 ? moveIndex : 0;
-    
-    // Apply ALL moves in the variation so we can navigate them all
-    const variationUciMoves = [];
-    for (let i = 0; i < moves.length; i++) {
-        if (moves[i]) {
-            try {
-                const moved = newAltGame.move(moves[i]);
-                if (moved) variationUciMoves.push(moved.from + moved.to + (moved.promotion || ''));
-            } catch {
-                break;
-            }
-        }
-    }
-
-    // Store the variation for yellow arrow rendering (from the position where variation starts)
-    const variationStartGame = new Chess(mainBaseFen);
-    for (const m of movesBefore) {
-        variationStartGame.move(m.san);
-    }
-    // Branch point is the number of moves in main game before the variation starts
-    const branchPointIndex = movesBefore.length;
-    setAltVariation({
-        moves: variationUciMoves,
-        startFen: variationStartGame.fen(),
-        branchPointIndex
-    });
-
-    // 6. Save the FULL game to the ref
-    altGameRef.current = newAltGame;
-
-    // 7. Create the specific board state for the CLICKED move
-    const clickedMoveGame = new Chess(mainBaseFen);
-    for (const m of movesBefore) {
-        clickedMoveGame.move(m.san);
-    }
-    for (let i = 0; i <= targetMoveIndex; i++) {
-        if (moves[i]) {
-            try {
-                clickedMoveGame.move(moves[i]);
-            } catch {
-                break;
-            }
-        }
-    }
-
-    _setAltGame(clickedMoveGame); // Update state to trigger re-render
-    
-    // 8. Update alt history index to the clicked position
-    const newAltIndex = movesBefore.length + targetMoveIndex; 
-    setAltHistoryIndex(newAltIndex);
-
-  }, [gameRef, setAltHistoryIndex, setIsAltBoardActive]);
+  const t = translations[language];
 
   return (
     <div className="h-screen bg-[#0b0f19] text-white flex flex-col font-sans overflow-hidden">
-      
       <Header 
         t={t}
         setShowImportModal={setShowImportModal}
@@ -891,7 +749,7 @@ function App() {
           />
         </div>
       )}
-      
+
       {showImportModal && (
         <ImportModal 
           showImportModal={showImportModal}
@@ -905,29 +763,28 @@ function App() {
 
       <main className="flex-grow relative h-0">
         <div className="absolute inset-0 flex overflow-hidden">
-        
-          {/* Left sidebar - Win% bar vertical */}
-          <div className={`w-10 flex flex-col border-r border-slate-800 z-10 justify-end relative ${boardOrientation === 'white' ? 'bg-slate-900' : 'bg-white'}`}>
-              <div
+          <div className="w-10 flex flex-col border-r border-slate-800 z-10 relative h-full overflow-hidden">
+              <div 
+                  className={`w-full transition-all duration-500 ${boardOrientation === 'white' ? 'bg-slate-900' : 'bg-white'}`}
+                  style={{ height: `${100 - displayWinPercent}%` }}
+              />
+              <div 
                   className={`w-full transition-all duration-500 ${boardOrientation === 'white' ? 'bg-white' : 'bg-slate-900'}`}
-                  style={{ height: `${winPercent}%` }}
+                  style={{ height: `${displayWinPercent}%` }}
               />
               <div className="absolute inset-0 flex flex-col justify-between py-2 text-[10px] font-black pointer-events-none">
                   <div className="text-center mix-blend-difference text-white">
-                      {boardOrientation === 'white' ? blackScoreStr : (evalScore > 0 ? `+${whiteScoreStr}` : whiteScoreStr)}
+                      {boardOrientation === 'white' ? blackScoreStr : whiteScoreStr}
                   </div>
                   <div className="text-center mix-blend-difference text-white">
-                      {boardOrientation === 'white' ? (evalScore > 0 ? `+${whiteScoreStr}` : whiteScoreStr) : blackScoreStr}
+                      {boardOrientation === 'white' ? whiteScoreStr : blackScoreStr}
                   </div>
               </div>
           </div>
 
-          <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-2 sm:p-4 overflow-hidden text-center max-h-full">
-            
-            {/* Top player (opponent) - [avatar] [name + elo] */}
-            <div className="mb-2 w-full max-w-[min(70vh, 70vw)] flex items-center gap-2 shrink-0">
+          <div className="flex-grow flex flex-col items-center justify-center bg-[#0d1117] p-2 sm:p-4 overflow-hidden text-center max-h-full min-w-0">
+            <div className="mb-2 w-full max-w-[min(75vh, 85vw, 850px)] flex items-center gap-2 shrink-0">
               {boardOrientation === 'white' ? (
-                // Black at top when White to move
                 <>
                   <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
                     {playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?'}
@@ -938,7 +795,6 @@ function App() {
                   </span>
                 </>
               ) : (
-                // White at top when Black to move
                 <>
                   <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
                     {playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?'}
@@ -951,29 +807,42 @@ function App() {
               )}
             </div>
 
-            {/* Chessboard */}
             <div className={`relative group shadow-2xl shadow-black p-2 bg-[#161b22] rounded-lg shrink min-h-0 alt-board-container transition-all duration-300 ${isAltBoardActive ? 'ring-4 ring-violet-500/50' : 'ring-1 ring-slate-800'}`}>
-              <div ref={boardRef} style={{ width: 'min(70vh, 70vw)', height: 'min(70vh, 70vw)' }} />
+              <div ref={boardRef} style={{ width: 'min(75vh, 85vw, 850px)', height: 'min(75vh, 85vw, 850px)' }} />
             </div>
 
-            {/* Accuracy badges below board - centered together */}
-            <div className="mt-2 w-full max-w-[min(70vh, 70vw)] flex items-center justify-center gap-3 shrink-0">
-              {/* Top player accuracy (violet) */}
-              <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-violet-400 font-mono shrink-0 whitespace-nowrap">
-                Acc: {boardOrientation === 'white' ? accuracy.black : accuracy.white}%
-              </span>
-              {/* Separator */}
-              <span className="text-[11px] text-slate-500 shrink-0">|</span>
-              {/* Bottom player accuracy (emerald) */}
-              <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-emerald-400 font-mono shrink-0 whitespace-nowrap">
-                Acc: {boardOrientation === 'white' ? accuracy.white : accuracy.black}%
-              </span>
+            <div className="mt-2 w-full max-w-[min(75vh, 85vw, 850px)] flex flex-col items-center gap-2 shrink-0">
+              <div className="flex items-center justify-center gap-3">
+                <div className="flex flex-col items-center">
+                  <span className="text-[10px] text-slate-500 uppercase font-black mb-0.5">White</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-violet-400 font-mono shrink-0 whitespace-nowrap">
+                      {accuracy.white}%
+                    </span>
+                    <span className="text-[10px] bg-violet-600/20 px-1.5 py-0.5 rounded text-violet-300 font-bold shrink-0">
+                      {calculateEstimatedElo(accuracy.white)}
+                    </span>
+                  </div>
+                </div>
+
+                <div className="h-8 w-px bg-slate-800 self-end mb-1" />
+
+                <div className="flex flex-col items-center">
+                  <span className="text-[10px] text-slate-500 uppercase font-black mb-0.5">Black</span>
+                  <div className="flex items-center gap-1.5">
+                    <span className="text-[11px] bg-slate-800 px-2 py-0.5 rounded text-emerald-400 font-mono shrink-0 whitespace-nowrap">
+                      {accuracy.black}%
+                    </span>
+                    <span className="text-[10px] bg-emerald-600/20 px-1.5 py-0.5 rounded text-emerald-300 font-bold shrink-0">
+                      {calculateEstimatedElo(accuracy.black)}
+                    </span>
+                  </div>
+                </div>
+              </div>
             </div>
-            
-            {/* Bottom player (user) - [avatar] [name + elo] */}
-            <div className="mt-2 w-full max-w-[min(70vh, 70vw)] flex items-center gap-2 shrink-0">
+
+            <div className="mt-2 w-full max-w-[min(75vh, 85vw, 850px)] flex items-center gap-2 shrink-0">
               {boardOrientation === 'white' ? (
-                // White at bottom when White to move
                 <>
                   <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
                     {playerNames.whiteAvatar ? <img src={playerNames.whiteAvatar} alt="avatar" /> : '?'}
@@ -984,7 +853,6 @@ function App() {
                   </span>
                 </>
               ) : (
-                // Black at bottom when Black to move
                 <>
                   <div className="w-6 h-6 sm:w-8 sm:h-8 bg-slate-700 rounded-lg flex items-center justify-center text-xs overflow-hidden shrink-0">
                     {playerNames.blackAvatar ? <img src={playerNames.blackAvatar} alt="avatar" /> : '?'}
@@ -997,7 +865,6 @@ function App() {
               )}
             </div>
 
-            {/* Navigation buttons */}
             <div className="mt-2 flex gap-2 sm:gap-3 items-center shrink-0">
               <button onClick={() => navigateHistory(-Infinity, false, isAltBoardActive)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><SkipBack className="w-4 h-4 sm:w-5 sm:h-5" /></button>
               <button onClick={() => navigateHistory(-1, true, isAltBoardActive)} className="bg-slate-800 hover:bg-slate-700 p-2 sm:p-3 rounded-lg transition"><ChevronLeft className="w-4 h-4 sm:w-5 sm:h-5" /></button>
@@ -1010,29 +877,43 @@ function App() {
 
           <div onMouseDown={startResizingH} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10" />
 
-          <div ref={sidebarRef} style={{ width: `${sidebarWidth}px` }} className="bg-[#161b22] border-l border-slate-800 flex flex-row shrink-0 h-full overflow-hidden">
-              <AnalysisView 
-                currentAnalysis={currentAnalysis}
-                t={t}
-                markdownComponents={markdownComponents}
-                onVariationMoveClick={onVariationMoveClick}
-                activeHistoryIndex={activeHistoryIndex}
-                isAltBoardActive={isAltBoardActive}
-                onAnalyzeMove={handleAnalyzeMove}
-                isLoading={isLoading}
-              />
-             
-              <div onMouseDown={startResizingV} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10 h-full" />
-
-              <div style={{ width: `${moveListWidth}px` }} className="border-l border-slate-800 flex flex-col shrink-0 h-full">
-                  <MatchProgress
+          <div 
+            ref={sidebarRef}
+            style={{ width: `${sidebarWidth}px` }}
+            className="bg-[#161b22] border-l border-slate-800 flex flex-col h-full overflow-hidden flex-shrink-0"
+          >
+              <div className="flex flex-row h-full overflow-hidden">
+                <div className="flex flex-col flex-grow min-w-0 h-full overflow-hidden">
+                  <div className="flex-grow overflow-auto">
+                    <AnalysisView 
+                      currentAnalysis={currentAnalysis}
                       t={t}
-                      history={history}
-                      batchAnalysisResults={batchAnalysisResults}
-                      historyIndex={historyIndex}
-                      navigateHistory={(target) => navigateHistory(target, false, false)}
-                      historyContainerRef={historyContainerRef}
-                  />
+                      markdownComponents={markdownComponents}
+                      onVariationMoveClick={onVariationMoveClick}
+                      activeHistoryIndex={activeHistoryIndex}
+                      isAltBoardActive={isAltBoardActive}
+                      onAnalyzeMove={handleAnalyzeMove}
+                      isLoading={isLoading}
+                    />
+                  </div>
+                </div>
+
+                <div onMouseDown={startResizingV} className="w-1.5 hover:bg-violet-600/50 bg-slate-800 transition-colors cursor-col-resize z-10 h-full" />
+
+                <div 
+                    ref={historyContainerRef}
+                    style={{ width: `${historyWidth}px` }}
+                    className="flex-shrink-0 border-l border-slate-800 flex flex-col h-full bg-[#0d1117]/20"
+                >
+                    <MatchProgress
+                        t={t}
+                        history={history}
+                        batchAnalysisResults={batchAnalysisResults}
+                        historyIndex={historyIndex}
+                        navigateHistory={(target) => navigateHistory(target, false, false)}
+                        historyContainerRef={historyContainerRef}
+                    />
+                </div>
               </div>
           </div>
 

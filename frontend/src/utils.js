@@ -5,10 +5,28 @@ import { Chess } from 'chess.js';
  */
 let variationCounter = 0;
 
+/**
+ * Clean unicode escape sequences from text (e.g., \u2022 -> •)
+ */
+function cleanUnicodeEscapes(text) {
+    if (!text) return text;
+    return text
+        .replace(/\\u2022/g, '•')
+        .replace(/u2022/g, '•')
+        .replace(/\\u00a0/g, ' ')
+        .replace(/\\u00e0/g, 'à')
+        .replace(/\\u00e9/g, 'é')
+        .replace(/\\u00ed/g, 'í')
+        .replace(/\\u00f3/g, 'ó')
+        .replace(/\\u00fa/g, 'ú')
+        .replace(/\\u00f1/g, 'ñ');
+}
+
 export function formatAIAnalysisText(text, activeHistoryIndex = -1) {
     if (!text) return text;
 
-    // Reset counter for each new analysis
+    // Clean unicode escape sequences first
+    text = cleanUnicodeEscapes(text);
     variationCounter = 0;
 
     // REGEX MAESTRA CORREGIDA:

@@ -16,24 +16,38 @@ const MatchProgress = ({ t, history, batchAnalysisResults, historyIndex, navigat
     movePairs.push([history[i], history[i + 1]]);
   }
 
-  const hasAnalysis = (move) => {
+  const hasRealAIAnalysis = (move) => {
     if (!move || !batchAnalysisResults) return false;
     const result = batchAnalysisResults[move.after];
-    return !!result && result.analysis && result.analysis !== 'Analizando con IA...';
+    // Only true for REAL AI analysis (not the '...' placeholder from Stockfish)
+    return !!result && result.analysis && result.analysis !== '...' && result.analysis !== 'Analizando con IA...';
+  };
+
+  const hasClassification = (move) => {
+    if (!move || !batchAnalysisResults) return false;
+    const result = batchAnalysisResults[move.after];
+    // True if move has been classified by Stockfish (regardless of AI analysis)
+    return !!result && !!result.classification;
   };
 
   const getMoveColor = (move) => {
     if (!move || !batchAnalysisResults) return 'hover:border-slate-500';
     const result = batchAnalysisResults[move.after];
-    const classification = result?.classification || 'good';
+    
+    // Show classification colors if Stockfish has classified the move
+    if (!result || !result.classification) {
+        return 'hover:border-slate-500';
+    }
+
+    const classification = result.classification;
     return {
-        best: 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400',
-        excellent: 'border-emerald-400/20 bg-emerald-400/5 text-emerald-300',
-        good: 'border-slate-700 bg-slate-800/50 text-slate-400',
+        best: 'border-cyan-500/40 bg-cyan-500/5 text-cyan-400',
+        excellent: 'border-emerald-500/40 bg-emerald-500/5 text-emerald-400',
+        good: 'border-green-500/40 bg-green-500/5 text-green-400',
         inaccuracy: 'border-yellow-500/30 bg-yellow-500/5 text-yellow-300',
         mistake: 'border-orange-500/30 bg-orange-500/5 text-orange-400',
-        blunder: 'border-rose-500/40 bg-rose-500/5 text-rose-400'
-    }[classification];
+        blunder: 'border-red-500/40 bg-red-500/5 text-red-400'
+    }[classification] || 'hover:border-slate-500';
   };
 
   return (
@@ -62,13 +76,13 @@ const MatchProgress = ({ t, history, batchAnalysisResults, historyIndex, navigat
                     className={`py-1.5 px-2 cursor-pointer border rounded ${whiteMove ? getMoveColor(whiteMove) : ''} ${historyIndex === i * 2 ? 'ring-2 ring-violet-500 ring-inset shadow-[inset_0_0_12px_rgba(139,92,246,0.1)]' : ''}`} 
                     onClick={() => whiteMove && navigateHistory(i * 2)}
                   >
-                    {formatMove(whiteMove, hasAnalysis(whiteMove))}
+                    {formatMove(whiteMove, hasRealAIAnalysis(whiteMove))}
                   </td>
                   <td 
                     className={`py-1.5 px-2 cursor-pointer border rounded ${blackMove ? getMoveColor(blackMove) : ''} ${historyIndex === (i * 2 + 1) ? 'ring-2 ring-violet-500 ring-inset shadow-[inset_0_0_12px_rgba(139,92,246,0.1)]' : ''}`} 
                     onClick={() => blackMove && navigateHistory(i * 2 + 1)}
                   >
-                    {formatMove(blackMove, hasAnalysis(blackMove))}
+                    {formatMove(blackMove, hasRealAIAnalysis(blackMove))}
                   </td>
                 </tr>
               );

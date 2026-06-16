@@ -21,3 +21,7 @@ export function formatChessText(text) {
 
     return formattedText;
 }
+
+export function getFenId(fen) {
+    return fen.substring(0, 15);
+}

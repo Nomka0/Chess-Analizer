@@ -4,6 +4,7 @@ import { executeTool, getAllToolSchemas } from './tools.js';
 import { centipawnsToWinProb, classifyMove, uciToSan, formatChessText, sanitizeLLMOutput, getSystemPrompt } from './utils.js';
 import { Chess } from 'chess.js';
 import { setCachedAnalysis } from './cache.js';
+import { validateAnalysisAgainstBoard } from './validation.js';
 
 const ollama = new Ollama({ host: 'http://127.0.0.1:11434' });
 
@@ -19,7 +20,7 @@ console.log('[ReAct Agent] Module loaded, DEFAULT_MODEL:', DEFAULT_MODEL);
  * Optimized for Qwen 2.5 Coder JSON tool calling
  */
 export function buildReActSystemPrompt(language, playerColor) {
-  const isEn = language === 'en';
+  const isEn = language.trim() === 'en';
   const colorName = playerColor === 'w' ? (isEn ? 'White' : 'Blancas') : (isEn ? 'Black' : 'Negras');
   const opponentColor = playerColor === 'w' ? (isEn ? 'Black' : 'Negras') : (isEn ? 'White' : 'Blancas');
   
@@ -33,6 +34,8 @@ export function buildReActSystemPrompt(language, playerColor) {
 
   return `You are an expert chess analyst using a ReAct (Reason-Act-Observe) process.
 You are analyzing a position for the **${colorName}** pieces. Opponent: **${opponentColor}**.
+
+**IMPORTANT: Write ALL explanation fields in ${isEn ? 'ENGLISH' : 'SPANISH'} (español). The entire analysis content must be in ${isEn ? 'English' : 'Spanish'}.**
 
 CRITICAL RULES:
 1. You MUST follow the ReAct loop: THOUGHT -> ACTION -> OBSERVATION -> repeat
@@ -55,19 +58,19 @@ ${toolDescriptions}
 {
   "thought": "I have gathered all necessary information. I can now provide the complete analysis.",
   "final": {
-    "generalExplanation": "1 brief sentence explaining the tactical consequence based ONLY on the context data.",
+    "generalExplanation": "${isEn ? "1 brief sentence explaining the tactical consequence based ONLY on the context data." : "1 oración breve explicando la consecuencia táctica basada SOLO en los datos de contexto provistos."}",
     "cons": {
       "exists": true,
-      "title": "Short title",
-      "explanation": "Detailed explanation of why the User Move is bad, strictly based on the Refutation Line provided."
+      "title": "${isEn ? "Short title" : "Título corto"}",
+      "explanation": "${isEn ? "Detailed explanation of why the User Move is bad, strictly based on the Refutation Line provided." : "Explicación detallada de por qué la jugada del usuario es mala, basada estrictamente en la Refutation Line provista."}"
     },
     "pros": {
       "exists": true,
-      "title": "Short title",
-      "explanation": "Explanation of the positive aspect."
+      "title": "${isEn ? "Short title" : "Título corto"}",
+      "explanation": "${isEn ? "Explanation of the positive aspect." : "Explicación del aspecto positivo."}"
     },
     "alternative": {
-      "explanation": "Explanation of why the EXACT Best Move provided in the context is superior to the User Move."
+      "explanation": "${isEn ? "Explanation of why the EXACT Best Move provided in the context is superior to the User Move." : "Explicación de por qué el Best Move EXACTO provisto en el contexto es superior a la jugada del usuario."}"
     }
   }
 }
@@ -84,6 +87,19 @@ ${toolDescriptions}
 8. DO NOT INVENT OR SUGGEST YOUR OWN MOVES. You MUST strictly base your entire analysis on the "Best Move", "Best Line", and "Refutation Line" provided in the context.
 
 9. If the context says the "Best Move" is Nf6, your alternative explanation must ONLY be about why Nf6 is good.
+
+10. **ANTI-HALLUCINATION RULES (MANDATORY - VIOLATION = INVALID ANALYSIS):**
+    a. NEVER make tactical claims (attacks, defenses, pins, checks, forks, controls, etc.) without FIRST verifying them using the \`verify_claim\` tool.
+    b. Before stating "Piece on X attacks Y", "Piece on X defends Y", "Move X gives check", "Piece on X pins Y", or ANY tactical claim, you MUST call \`verify_claim\` with the exact claim text.
+    c. If \`verify_claim\` returns \`verified: false\`, you MUST NOT include that claim in your final analysis. You must correct it based on the tool's explanation.
+    d. If \`verify_claim\` returns \`verified: null\` (unrecognized pattern), you MUST NOT make that claim - rephrase or omit it.
+    e. Common hallucination patterns to NEVER assume without verification:
+       - Queen/rook/bishop attacking specific squares (e.g., "Qa5 attacks e2" - often wrong, verify!)
+       - "Attacks the pawn on X" without specifying which piece attacks
+       - "Pressures the king", "weakens king safety" without verify_claim confirmation
+       - "Controls the X-file" or "dominates the center" without verification
+       - Pin/deflection/fork/skewer claims without verification
+    f. The ONLY source of truth is the board position (FEN) and engine lines provided. Your chess knowledge is SECONDARY and must be validated.
 
 Language: ${language}`;
 }
@@ -322,11 +338,18 @@ export async function runReActAgent(params) {
     }
 
     // Build the final HTML output (same format as existing performAnalysis)
-    const isEn = language === 'en';
-    let generatedHtml = `**${sanUserMove}** es un/una **${mappedClassification}** (${cpLoss}cp). ${finalAnalysis.generalExplanation}\n\n`;
+    const isEn = language.trim() === 'en';
+    const getArticle = (classification, isEnglish) => {
+        if (!isEnglish) return 'es un/una';
+        const firstChar = classification.charAt(0).toLowerCase();
+        const vowels = 'aeiou';
+        return vowels.includes(firstChar) ? 'an' : 'a';
+    };
+    const article = getArticle(mappedClassification, isEn);
+    let generatedHtml = `**${sanUserMove}** ${isEn ? `is ${article}` : 'es un/una'} **${mappedClassification}** (${cpLoss}cp). ${finalAnalysis.generalExplanation}\n`;
 
     if (finalAnalysis.cons && finalAnalysis.cons.exists) {
-      generatedHtml += `# ${isEn ? 'Cons' : 'Contras'}:\n`;
+      generatedHtml += `\n# ${isEn ? 'Cons' : 'Contras'}:\n`;
       generatedHtml += `- ${finalAnalysis.cons.explanation}\n`;
       generatedHtml += `<details>\n<summary>${finalAnalysis.cons.title}</summary>\n`;
       generatedHtml += `<div class="variation">${sanRefutationLine}</div>\n</details>\n\n`;
@@ -346,6 +369,15 @@ export async function runReActAgent(params) {
 
     const cleanAnalysis = formatChessText(sanitizeLLMOutput(generatedHtml));
 
+    // Post-generation validation against board to catch hallucinations
+    const playerColorName = chess.turn() === 'w' ? 'white' : 'black';
+    const validation = validateAnalysisAgainstBoard(cleanAnalysis, fen, playerColorName);
+    if (!validation.valid) {
+      console.warn(`[ReAct Agent] ⚠️ Hallucination detection for [${fen.substring(0,15)}...]: ${validation.corrections.length} corrections`);
+      validation.warnings.forEach(w => console.warn(`[ReAct Validation] ${w}`));
+    }
+    const validatedAnalysis = validation.validatedAnalysis;
+
     const result = {
       fen,
       uciBestMove: mainEval.bestmove,
@@ -353,7 +385,7 @@ export async function runReActAgent(params) {
       score: actualScore,
       bestScore: bestScore,
       scoreType: mainEval.scoreType,
-      analysis: cleanAnalysis,
+      analysis: validatedAnalysis,
       language,
       pv: mainEval.pv,
       cpLoss,
