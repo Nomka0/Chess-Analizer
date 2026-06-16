@@ -103,6 +103,10 @@ function App() {
   const [altHistoryIndex, setAltHistoryIndex] = useState(-1);
   const altHistoryIndexRef = useRef(-1);
   useEffect(() => { altHistoryIndexRef.current = altHistoryIndex; }, [altHistoryIndex]);
+  
+  // Track variation for alt board: { moves: uci[], branchPointIndex: number }
+  const [altVariation, setAltVariation] = useState(null);
+
   const [boardOrientation, setBoardOrientation] = useState('white');
   const [playerNames, setPlayerNames] = useState({ 
     white: 'White', black: 'Black', 
@@ -183,6 +187,9 @@ function App() {
   }, []);
 
   const navigateHistory = useCallback((target, isRelative = false, isAlt = isAltBoardActive) => {
+    if (!isAlt) {
+      setAltVariation(null); // Clear variation when navigating main board
+    }
     let newIndex;
     const gameInstance = isAlt ? altGameRef.current : gameRef.current;
     const hIdx = isAlt ? altHistoryIndex : historyIndex;
@@ -294,6 +301,9 @@ function App() {
         setHistoryIndex(-1);
       }
       setBatchAnalysisResults({});
+      setAltVariation(null);
+      setIsAltBoardActive(false);
+      setAltHistoryIndex(-1);
       setShowImportModal(null);
       setFenInput('');
     } catch (e) { alert("Import Error: " + e.message); }
@@ -338,9 +348,11 @@ function App() {
 
   const activeHistoryIndex = isAltBoardActive ? altHistoryIndex : historyIndex;
 
+  // Always use main game FEN for analysis lookup so analysis stays visible on alt board
+  const mainGameFen = game.fen();
   const currentAnalysis = useMemo(() => {
-    return batchAnalysisResults[currentFen] || null;
-  }, [currentFen, batchAnalysisResults]);
+    return batchAnalysisResults[mainGameFen] || null;
+  }, [mainGameFen, batchAnalysisResults]);
 
   const displayWinPercent = useMemo(() => {
     if (!currentAnalysis || currentAnalysis.score === undefined) return 50;
@@ -428,17 +440,27 @@ function App() {
           shapes.push({ orig: playedMove.from, dest: playedMove.to, brush: 'yellow', modifiers: { lineWidth: 10 } });
         }
 
-        // Show yellow arrow for the move that REACHED the current position on the alt board
-        if (isAltBoardActive) {
-          const altHistory = altGame.history({ verbose: true });
-          const lastAltMove = altHistory[altHistory.length - 1];
-          if (lastAltMove) {
-            shapes.push({
-              orig: lastAltMove.from,
-              dest: lastAltMove.to,
-              brush: 'yellow',
-              modifiers: { lineWidth: 10 }
-            });
+        // Show yellow arrow for the current move in the variation on the alt board
+        if (isAltBoardActive && altVariation && altVariation.moves.length > 0) {
+          // currentVariationIndex = how far into the variation we are on the alt board
+          // altHistoryIndex is the absolute index in alt game history
+          // branchPointIndex is where the variation starts in alt game history
+          const currentVariationIndex = altHistoryIndex - (altVariation.branchPointIndex ?? 0);
+          
+          // Show only the CURRENT alt move as yellow arrow (not the full remaining variation)
+          // The current move in the variation is at currentVariationIndex
+          if (currentVariationIndex >= 0 && currentVariationIndex < altVariation.moves.length) {
+            const uci = altVariation.moves[currentVariationIndex];
+            if (uci.length >= 4) {
+              const orig = uci.substring(0, 2);
+              const dest = uci.substring(2, 4);
+              shapes.push({
+                orig,
+                dest,
+                brush: 'yellow',
+                modifiers: { lineWidth: 10 }
+              });
+            }
           }
         }
 
@@ -469,7 +491,7 @@ function App() {
                 : undefined
         });
     }
-  }, [currentFen, boardOrientation, history, activeHistoryIndex, isAltBoardActive, batchAnalysisResults, game, altGame]);
+  }, [currentFen, boardOrientation, history, activeHistoryIndex, isAltBoardActive, batchAnalysisResults, game, altGame, altVariation, altHistoryIndex]);
 
   const accuracy = useMemo(() => {
     const calcAcc = (moves) => {
@@ -525,15 +547,35 @@ function App() {
     const sequence = variationSequence.split(',');
     const movesToApply = sequence.slice(0, moveIndex + 1);
     
+    // Use separate game instances to avoid mutation issues
+    const uciGame = new Chess();
     const tempGame = new Chess();
     const mainHistory = gameRef.current.history({ verbose: true });
     const baseHistory = mainHistory.slice(0, startIndex);
     
     const initialFen = fullGameHistoryRef.current.length > 0 ? fullGameHistoryRef.current[0].before : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+    
+    // Set up both games with base position
+    uciGame.load(initialFen);
     tempGame.load(initialFen);
+    for (const m of baseHistory) {
+      uciGame.move(m.san);
+      tempGame.move(m.san);
+    }
     
-    for (const m of baseHistory) tempGame.move(m.san);
+    // Convert variation moves to UCI for arrow rendering (using separate game)
+    const variationUciMoves = [];
+    for (const m of sequence) {
+      try {
+        const moved = uciGame.move(m);
+        if (moved) variationUciMoves.push(moved.from + moved.to + (moved.promotion || ''));
+      } catch (e) {
+        console.warn("Could not convert variation move to UCI", m, e);
+        break;
+      }
+    }
     
+    // Replay moves up to the clicked move for the initial alt board state
     for (const m of movesToApply) {
       try {
         tempGame.move(m);
@@ -543,9 +585,13 @@ function App() {
       }
     }
     
+    // Branch point is where the variation starts in alt game history
+    const branchPointIndex = baseHistory.length;
+    
     altGameRef.current = tempGame;
     _setAltGame(new Chess(tempGame.fen()));
     setAltHistoryIndex(startIndex + moveIndex);
+    setAltVariation({ moves: variationUciMoves, branchPointIndex });
     setIsAltBoardActive(true);
   }, []);
 
@@ -686,6 +732,7 @@ function App() {
       const isVariationClick = e.target.closest('.variation-wrapper') || e.target.closest('.clickable-move');
       if (!isAltBoardClick && !isVariationClick) {
         setIsAltBoardActive(false);
+        setAltVariation(null);
       }
     };
     window.addEventListener('mousedown', handleGlobalClick);
