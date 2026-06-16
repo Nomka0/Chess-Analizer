@@ -24,32 +24,31 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveC
     highlighted.forEach(el => el.classList.remove('active-variation-move', 'ring-2', 'ring-violet-500', 'bg-violet-500/20', 'rounded', 'px-1'));
 
     if (!isAltBoardActive) return; // Only highlight in alt board/variations
+    if (!activeVariationKey) return; // No variation clicked yet
 
-    // Find all variation wrappers
-    const wrappers = containerRef.current.querySelectorAll('.variation-wrapper');
-    let targetMove = null;
+    // Find the specific variation wrapper that was clicked
+    const targetWrapper = containerRef.current.querySelector(`.variation-wrapper[data-variation-key="${activeVariationKey}"]`);
+    if (!targetWrapper) return;
 
-    for (const wrapper of wrappers) {
-        const startIndex = parseInt(wrapper.getAttribute('data-start-index') || '-1');
-        const variation = wrapper.getAttribute('data-variation') || '';
-        const moves = variation.split(',');
+    const startIndex = parseInt(targetWrapper.getAttribute('data-start-index') || '-1');
+    const variation = targetWrapper.getAttribute('data-variation') || '';
+    const moves = variation.split(',');
 
-        // Find the move in this variation that matches activeHistoryIndex
-        for (let i = 0; i < moves.length; i++) {
-            if (startIndex + i === activeHistoryIndex) {
-                // Find all clickable moves in this wrapper
-                const clickableMoves = wrapper.querySelectorAll('.clickable-move');
-                // The i-th clickable move in this wrapper corresponds to i-th move in the variation
-                targetMove = clickableMoves[i];
-                if (targetMove) {
-                    targetMove.classList.add('active-variation-move', 'ring-2', 'ring-violet-500', 'bg-violet-500/20', 'rounded', 'px-1');
-                }
-                break;
+    // Find the move in THIS variation that matches activeHistoryIndex
+    for (let i = 0; i < moves.length; i++) {
+        if (startIndex + i === activeHistoryIndex) {
+            // Find all clickable moves in this wrapper
+            const clickableMoves = targetWrapper.querySelectorAll('.clickable-move');
+            // The i-th clickable move in this wrapper corresponds to i-th move in the variation
+            const targetMove = clickableMoves[i];
+            if (targetMove) {
+                targetMove.classList.add('active-variation-move', 'ring-2', 'ring-violet-500', 'bg-violet-500/20', 'rounded', 'px-1');
             }
+            break;
         }
-        if (targetMove) break;
     }
 
+    const targetMove = targetWrapper.querySelector('.active-variation-move');
     if (targetMove) {
         // Only scroll if necessary to avoid jump
         const container = containerRef.current;
@@ -61,7 +60,7 @@ const AnalysisView = ({ currentAnalysis, t, markdownComponents, onVariationMoveC
             targetMove.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
         }
     }
-  }, [activeHistoryIndex, isAltBoardActive, currentAnalysis]);
+  }, [activeHistoryIndex, isAltBoardActive, currentAnalysis, activeVariationKey]);
 
   const handleTextClick = (e) => {
     const moveNode = e.target.closest('.clickable-move');

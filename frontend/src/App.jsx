@@ -197,10 +197,22 @@ function App() {
     const setGState = isAlt ? _setAltGame : _setGame;
 
     const totalMoves = gameInstance.history().length;
-    if (target === -Infinity) newIndex = -1;
-    else if (target === Infinity) newIndex = totalMoves - 1;
-    else if (isRelative) newIndex = Math.max(-1, Math.min(hIdx + target, totalMoves - 1));
-    else newIndex = target;
+    
+    // If on alt board with variation, constrain navigation to variation range
+    if (isAlt && altVariation) {
+      const varStart = altVariation.branchPointIndex;
+      const varEnd = varStart + altVariation.moves.length - 1;
+      
+      if (target === -Infinity) newIndex = varStart;
+      else if (target === Infinity) newIndex = varEnd;
+      else if (isRelative) newIndex = Math.max(varStart, Math.min(hIdx + target, varEnd));
+      else newIndex = Math.max(varStart, Math.min(target, varEnd));
+    } else {
+      if (target === -Infinity) newIndex = -1;
+      else if (target === Infinity) newIndex = totalMoves - 1;
+      else if (isRelative) newIndex = Math.max(-1, Math.min(hIdx + target, totalMoves - 1));
+      else newIndex = target;
+    }
 
     const historyAtTarget = gameInstance.history({ verbose: true }).slice(0, newIndex + 1);
     const tempGame = new Chess();
@@ -213,7 +225,7 @@ function App() {
 
     setGState(tempGame);
     setHIdx(newIndex);
-  }, [isAltBoardActive, altHistoryIndex, historyIndex, _setGame, _setAltGame, setHistoryIndex, setAltHistoryIndex]);
+  }, [isAltBoardActive, altHistoryIndex, historyIndex, _setGame, _setAltGame, setHistoryIndex, setAltHistoryIndex, altVariation]);
 
   const [sidebarWidth, setSidebarWidth] = useState(1400);
   const [historyWidth, setHistoryWidth] = useState(220);
@@ -545,7 +557,6 @@ function App() {
 
   const onVariationMoveClick = useCallback((moveSan, variationSequence, moveIndex, startIndex) => {
     const sequence = variationSequence.split(',');
-    const movesToApply = sequence.slice(0, moveIndex + 1);
     
     // Use separate game instances to avoid mutation issues
     const uciGame = new Chess();
@@ -575,8 +586,8 @@ function App() {
       }
     }
     
-    // Replay moves up to the clicked move for the initial alt board state
-    for (const m of movesToApply) {
+    // Apply ALL variation moves to alt game so user can navigate full variation
+    for (const m of sequence) {
       try {
         tempGame.move(m);
       } catch (e) {
@@ -590,7 +601,7 @@ function App() {
     
     altGameRef.current = tempGame;
     _setAltGame(new Chess(tempGame.fen()));
-    setAltHistoryIndex(startIndex + moveIndex);
+    setAltHistoryIndex(startIndex + moveIndex); // Start at clicked move
     setAltVariation({ moves: variationUciMoves, branchPointIndex });
     setIsAltBoardActive(true);
   }, []);
