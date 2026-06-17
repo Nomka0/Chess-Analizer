@@ -4,7 +4,7 @@ import { spawn } from 'child_process';
 import { Ollama } from 'ollama';
 const ollama = new Ollama({ host: 'http://127.0.0.1:11434' });
 import { performance } from 'perf_hooks';
-import { getCachedAnalysis, setCachedAnalysis, getCachedEngine, setCachedEngine } from './cache.js';
+import { getCachedAnalysis, setCachedAnalysis, getCachedEngine, setCachedEngine, flushCache } from './cache.js';
 import { Chess } from 'chess.js';
 import { formatChessText, getFenId } from './utils.js';
 import { validateAnalysisAgainstBoard } from './validation.js';
@@ -435,10 +435,15 @@ async function getChessApiEval(fen) {
                         try {
                             const data = JSON.parse(bodyRes);
                             if (data.move) {
-                                console.log(`[ChessApi] ✅ Found bestmove: ${data.move} for [${fenId}...] (cp=${data.centipawns})`);
+                                // parseInt returns NaN on failure; `NaN ?? 0` is still NaN
+                                // (nullish coalescing ignores NaN), which would poison the
+                                // score downstream. Coerce explicitly.
+                                const parsed = parseInt(data.centipawns);
+                                const score = Number.isNaN(parsed) ? 0 : parsed;
+                                console.log(`[ChessApi] ✅ Found bestmove: ${data.move} for [${fenId}...] (cp=${score})`);
                                 return resolve({
                                     bestmove: data.move,
-                                    score: parseInt(data.centipawns) ?? 0,
+                                    score,
                                     scoreType: 'cp',
                                     source: 'chess-api'
                                 });
@@ -476,59 +481,30 @@ async function getChessApiEval(fen) {
     });
 }
 
-async function getLichessMastersEval(fen) {
-    const fenId = getFenId(fen);
-    const startTime = performance.now();
-    return new Promise((resolve) => {
-        const url = `https://explorer.lichess.ovh/masters?fen=${encodeURIComponent(fen)}`;
-        const options = {
-            timeout: 3000,
-            family: 4
-        };
-
-        console.log(`[LichessMasters] 📡 Requesting masters eval for [${fenId}...]`);
-        const req = https.get(url, options, (res) => {
-            let body = '';
-            res.on('data', (chunk) => { body += chunk; });
-            res.on('end', () => {
-                const duration = (performance.now() - startTime).toFixed(1);
-                console.log(`[LichessMasters] 📥 Response status: ${res.statusCode} for [${fenId}...] in ${duration}ms`);
-                if (res.statusCode === 200) {
-                    try {
-                        const data = JSON.parse(body);
-                        if (data.moves && data.moves.length > 0) {
-                            const bestMove = data.moves[0].uci;
-                            console.log(`[LichessMasters] ✅ Found bestmove: ${bestMove} for [${fenId}...] (games=${data.moves[0].white + data.moves[0].draws + data.moves[0].black})`);
-                            return resolve({
-                                bestmove: bestMove,
-                                score: 0,
-                                scoreType: 'cp',
-                                source: 'lichess-masters'
-                            });
-                        }
-                        console.log(`[LichessMasters] ⚠️  No moves in masters DB for [${fenId}...]`);
-                    } catch (e) {
-                        console.error(`[LichessMasters] ❌ JSON Parse Error for [${fenId}...]: ${e.message}`);
-                    }
-                } else {
-                    console.warn(`[LichessMasters] ⚠️  Non-200 status ${res.statusCode} for [${fenId}...]`);
+// Resolves with the first promise that produces a truthy result. Rejects only
+// when every promise has settled without a truthy value, so callers can fall
+// back to the local engine. This lets us race remote sources concurrently
+// instead of awaiting them one after another.
+function raceExternalSources(promises) {
+    return new Promise((resolve, reject) => {
+        let pending = promises.length;
+        let settled = false;
+        for (const p of promises) {
+            Promise.resolve(p).then(val => {
+                if (settled) return;
+                if (val) {
+                    settled = true;
+                    resolve(val);
+                } else if (--pending === 0) {
+                    reject(new Error('All external sources returned empty'));
                 }
-                resolve(null);
+            }).catch(() => {
+                if (settled) return;
+                if (--pending === 0) {
+                    reject(new Error('All external sources failed'));
+                }
             });
-        });
-
-        req.on('error', (e) => {
-            const duration = (performance.now() - startTime).toFixed(1);
-            console.warn(`[LichessMasters] ⏭️  Skipped for [${fenId}...] after ${duration}ms: ${e.message}`);
-            resolve(null);
-        });
-
-        req.on('timeout', () => {
-            const duration = (performance.now() - startTime).toFixed(1);
-            console.warn(`[LichessMasters] ⏱️  Timeout for [${fenId}...] after ${duration}ms`);
-            req.destroy();
-            resolve(null);
-        });
+        }
     });
 }
 
@@ -544,37 +520,24 @@ async function getEngineEvaluation(fen, options) {
     }
     console.log(`[Engine] 🔍 Cache MISS for [${fenId}...] - querying external sources`);
 
-    // Level 2: Lichess Cloud Eval
-    console.log(`[Engine] 🌐 Trying Lichess Cloud for [${fenId}...]`);
-    const lichess = await getLichessCloudEval(fen);
-    if (lichess) {
-        console.log(`[Engine] ✅ Lichess Cloud HIT for [${fenId}...] (score=${lichess.score}, bestmove=${lichess.bestmove}, depth=cloud)`);
-        setCachedEngine(fen, lichess);
-        return lichess;
-    }
-    console.log(`[Engine] ❌ Lichess Cloud MISS for [${fenId}...]`);
+    // Level 2: Race remote sources concurrently. The fastest successful one
+    // wins; we only fall through to local Stockfish if none return a result.
+    console.log(`[Engine] 🌐 Racing Lichess Cloud + Chess-API for [${fenId}...]`);
+    const external = await raceExternalSources([
+        getLichessCloudEval(fen),
+        getChessApiEval(fen),
+    ]).catch(err => {
+        console.log(`[Engine] ❌ All external sources missed for [${fenId}...]: ${err.message}`);
+        return null;
+    });
 
-    // Level 3: Chess-API
-    console.log(`[Engine] 🌐 Trying Chess-API for [${fenId}...]`);
-    const chessApi = await getChessApiEval(fen);
-    if (chessApi) {
-        console.log(`[Engine] ✅ Chess-API HIT for [${fenId}...] (score=${chessApi.score}, bestmove=${chessApi.bestmove})`);
-        setCachedEngine(fen, chessApi);
-        return chessApi;
+    if (external) {
+        console.log(`[Engine] ✅ External HIT for [${fenId}...] (source=${external.source}, score=${external.score}, bestmove=${external.bestmove}) in ${(performance.now() - startTime).toFixed(1)}ms`);
+        setCachedEngine(fen, external);
+        return external;
     }
-    console.log(`[Engine] ❌ Chess-API MISS for [${fenId}...]`);
 
-    // Level 4: Lichess Masters
-    console.log(`[Engine] 🌐 Trying Lichess Masters for [${fenId}...]`);
-    const masters = await getLichessMastersEval(fen);
-    if (masters) {
-        console.log(`[Engine] ✅ Lichess Masters HIT for [${fenId}...] (bestmove=${masters.bestmove})`);
-        setCachedEngine(fen, masters);
-        return masters;
-    }
-    console.log(`[Engine] ❌ Lichess Masters MISS for [${fenId}...]`);
-
-    // Level 5: Local Stockfish
+    // Level 3: Local Stockfish
     console.log(`[Engine] ♟️  Stockfish local analysis for [${fenId}...] (depth=${options?.depth || 22})`);
     const local = await pool.addRequest(fen, options);
     const duration = (performance.now() - startTime).toFixed(1);
@@ -1252,3 +1215,25 @@ app.listen(PORT, '127.0.0.1', () => {
   console.log(`Server running on port ${PORT}`);
   pool.waitForAllReady().catch(console.error);
 });
+
+// Graceful shutdown: flush any pending debounced cache writes and tear down
+// the worker pool so we don't orphan stockfish children on exit.
+let shuttingDown = false;
+async function shutdown(signal) {
+  if (shuttingDown) return;
+  shuttingDown = true;
+  console.log(`\n[Shutdown] ${signal} received, flushing cache...`);
+  try {
+    await flushCache();
+    console.log('[Shutdown] ✅ Cache flushed.');
+  } catch (e) {
+    console.error('[Shutdown] ❌ Flush failed:', e.message);
+  }
+  for (const worker of pool.workers) {
+    try { worker.engine?.kill('SIGTERM'); } catch {}
+  }
+  process.exit(0);
+}
+
+process.on('SIGINT', () => shutdown('SIGINT'));
+process.on('SIGTERM', () => shutdown('SIGTERM'));
