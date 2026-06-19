@@ -1155,6 +1155,92 @@ app.get('/api/analyze-stream', async (req, res) => {
   }
 });
 
+// SSE endpoint for batch engine evaluation - streams each result as it's
+// computed so the frontend can classify + render moves incrementally instead
+// of waiting for the whole batch.
+app.post('/api/evaluate-stream', async (req, res) => {
+  const startApi = performance.now();
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.flushHeaders();
+
+  const sendEvent = (data) => res.write(`data: ${JSON.stringify(data)}\n\n`);
+  const sendDone = () => res.write('data: [DONE]\n\n');
+
+  const { fens } = req.body;
+  if (!fens || !Array.isArray(fens)) {
+    sendEvent({ error: "Missing or invalid 'fens' array" });
+    sendDone();
+    return res.end();
+  }
+
+  // Bounded concurrency: fire evaluations in waves, stream each result as it
+  // resolves. This lets cache hits / fast remote sources surface immediately
+  // while slower Stockfish evaluations trickle in.
+  const CONCURRENCY = 3;
+  console.log(`[Evaluate-Stream] 🚀 Starting: ${fens.length} FENs (concurrency=${CONCURRENCY})`);
+
+  try {
+    for (let i = 0; i < fens.length; i += CONCURRENCY) {
+      if (res.destroyed) {
+        console.log('[Evaluate-Stream] ⚠️  Client disconnected, aborting');
+        break;
+      }
+      const chunk = fens.slice(i, i + CONCURRENCY);
+      // Process each FEN in the wave; emit it the moment it resolves rather
+      // than waiting for the whole wave to finish.
+      await Promise.all(chunk.map(async (fen, j) => {
+        const fenId = getFenId(fen);
+        const index = i + j;
+        try {
+          const evalResult = await getEngineEvaluation(fen, { depth: 22 });
+          sendEvent({
+            index,
+            fen,
+            result: {
+              fen,
+              score: evalResult.score,
+              bestmove: evalResult.bestmove,
+              uciBestMove: evalResult.bestmove,
+              scoreType: evalResult.scoreType,
+              pv: evalResult.pv,
+              source: evalResult.source
+            },
+            error: null
+          });
+        } catch (err) {
+          console.error(`[Evaluate-Stream] ❌ [${fenId}...]:`, err.message);
+          sendEvent({
+            index,
+            fen,
+            result: {
+              fen,
+              score: 0,
+              bestmove: '',
+              uciBestMove: '',
+              scoreType: 'cp',
+              pv: '',
+              source: 'error'
+            },
+            error: err.message
+          });
+        }
+      }));
+    }
+
+    sendDone();
+    const apiDuration = (performance.now() - startApi).toFixed(1);
+    console.log(`[Perf: Evaluate-Stream] ${fens.length} FENs in ${apiDuration}ms`);
+    res.end();
+  } catch (error) {
+    console.error('[Evaluate-Stream] ❌ Fatal:', error);
+    sendEvent({ error: error.message });
+    sendDone();
+    res.end();
+  }
+});
+
 app.post('/api/evaluate-all', async (req, res) => {
   const startApi = performance.now();
   const { fens } = req.body;

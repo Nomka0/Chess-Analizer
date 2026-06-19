@@ -610,125 +610,213 @@ function App() {
     if (isLoading || history.length === 0) return;
     setIsLoading(true);
     setAnalysisProgress(0);
+    // Reset so colors fill in incrementally as evals stream in, rather than
+    // appearing all at once at the end.
+    setBatchAnalysisResults({});
+
+    const initialFen = fullGameHistoryRef.current.length > 0
+      ? fullGameHistoryRef.current[0].before
+      : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1';
+
+    // Two-phase AI analysis budget.
+    const PHASE1_LIMIT = 2;  // analyzed in real-time as they are found
+    const PHASE2_LIMIT = 6;  // worst remaining, after full eval + phase 1
+    const AI_TOTAL_CAP = PHASE1_LIMIT + PHASE2_LIMIT; // progress-bar denominator
 
     try {
-      // Step 1: Get engine evaluations for ALL positions in the game
-      const allFens = [
-        fullGameHistoryRef.current.length > 0 ? fullGameHistoryRef.current[0].before : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1',
-        ...history.map(m => m.after)
-      ];
+      // allFens[j]: position before any move (j=0) or after move j-1 (j>0).
+      // Move i needs allFens[i] (before) + allFens[i+1] (after) to classify.
+      const allFens = [initialFen, ...history.map(m => m.after)];
 
-      const evalRes = await fetch('http://127.0.0.1:3001/api/evaluate-all', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ fens: allFens })
-      });
-      
-      if (!evalRes.ok) throw new Error("Failed to fetch evaluations");
-      const engineResults = await evalRes.json();
-      
-      // Map results by FEN for easy lookup
-      const evalMap = {};
-      engineResults.forEach(res => {
-        evalMap[res.fen] = res;
-      });
+      const evalMap = {};                  // fen -> engine result
+      const classifiedMoves = new Set();
+      const allBadMoveEntries = [];        // every user bad move discovered
+      const phase1Moves = [];              // first PHASE1_LIMIT bad moves
+      const phase1Indices = new Set();     // their history indices (for phase 2 exclusion)
 
-      // Step 2: Classify each move and filter those that need AI analysis
-      const currentResults = {};
-      const movesToAI = [];
+      let evalDone = false;
+      let phase1Started = false;
+      let phase1Done = false;
+      let phase2Started = false;
+      let finished = false;
+      const aiDone = { n: 0 };
 
-      history.forEach((move, i) => {
-        const prevFen = i === 0 
-          ? (fullGameHistoryRef.current.length > 0 ? fullGameHistoryRef.current[0].before : 'rnbqkbnr/pppppppp/8/8/8/8/PPPPPPPP/RNBQKBNR w KQkq - 0 1')
-          : history[i-1].after;
-        
-        const targetFen = move.after;
+      const finish = () => {
+        if (finished) return;
+        finished = true;
+        setAnalysisProgress(100);
+        setIsLoading(false);
+      };
+
+      // Shared handler for an AI analysis result arriving over either stream.
+      const onAIResult = (data) => {
+        const targetFen = history[data.index].after;
+        setBatchAnalysisResults(prev => ({
+          ...prev,
+          [targetFen]: {
+            ...prev[targetFen],
+            analysis: data.result.analysis,
+            bestmove: data.result.bestmove,
+            classification: data.result.classification || prev[targetFen]?.classification
+          }
+        }));
+        aiDone.n++;
+        setAnalysisProgress(prev => Math.max(prev, 50 + Math.round((aiDone.n / AI_TOTAL_CAP) * 50)));
+      };
+
+      // Opens an SSE AI-analysis stream for a batch of moves and resolves when
+      // the stream ends ([DONE] / error). Reused by both phases.
+      const streamAI = (moves, onAllDone) => {
+        if (!moves || moves.length === 0) { onAllDone(); return; }
+        const fensParam = JSON.stringify(moves);
+        const url = `http://127.0.0.1:3001/api/analyze-stream?fens=${encodeURIComponent(fensParam)}&model=${selectedModel}&language=${language}`;
+        const es = new EventSource(url);
+        es.onmessage = (event) => {
+          if (event.data === '[DONE]') { es.close(); onAllDone(); return; }
+          try {
+            const data = JSON.parse(event.data);
+            if (data.index !== undefined && data.result) onAIResult(data);
+          } catch (e) { console.error("Error parsing SSE data", e); }
+        };
+        es.onerror = (err) => { console.error("SSE Error", err); es.close(); onAllDone(); };
+      };
+
+      // Phase 1: analyze the first bad moves in real time (concurrent with eval stream)
+      const startPhase1 = () => {
+        if (phase1Started || phase1Moves.length === 0) return;
+        phase1Started = true;
+        streamAI(phase1Moves, () => {
+          phase1Done = true;
+          maybeStartPhase2();
+        });
+      };
+
+      // Phase 2: after eval + phase 1 complete, analyze the worst remaining moves
+      const maybeStartPhase2 = () => {
+        if (phase2Started) return;
+        if (!evalDone || !phase1Done) return;
+        phase2Started = true;
+        const pool = allBadMoveEntries.filter(m => !phase1Indices.has(m.index));
+        if (pool.length === 0) { finish(); return; }
+        // Worst first (largest centipawn loss), then take the phase-2 budget
+        pool.sort((a, b) => b.cpLoss - a.cpLoss);
+        const phase2Moves = pool.slice(0, PHASE2_LIMIT);
+        if (phase2Moves.length === 0) { finish(); return; }
+        streamAI(phase2Moves, finish);
+      };
+
+      // Classify a single move once both its surrounding positions are known.
+      // Idempotent via the classifiedMoves set; called incrementally as evals land.
+      const tryClassifyMove = (i) => {
+        if (i < 0 || i >= history.length) return;
+        if (classifiedMoves.has(i)) return;
+        const prevFen = allFens[i];
+        const targetFen = allFens[i + 1];
         const prevEval = evalMap[prevFen];
         const currentEval = evalMap[targetFen];
+        if (!prevEval || !currentEval) return;
 
-        if (prevEval && currentEval) {
-          const isWhiteMove = i % 2 === 0;
-          const bestScore = prevEval.score; // Stockfish score for side to move
-          // currentEval.score is for the NEXT player, so negate it for moving player's perspective
-          const actualScore = -currentEval.score; 
-          
-          const classification = getClassification(bestScore, actualScore, Math.floor(i/2) + 1, move.san);
-          const cpLoss = Math.max(0, bestScore - actualScore);
+        classifiedMoves.add(i);
+        const move = history[i];
+        const isWhiteMove = i % 2 === 0;
+        const bestScore = prevEval.score; // score for side to move (before)
+        // currentEval is scored for the NEXT side to move, so negate for the mover's perspective
+        const actualScore = -currentEval.score;
 
-          currentResults[targetFen] = {
-            score: isWhiteMove ? actualScore : -actualScore, // Store relative to white for display
+        const classification = getClassification(bestScore, actualScore, Math.floor(i / 2) + 1, move.san);
+        const cpLoss = Math.max(0, bestScore - actualScore);
+
+        setBatchAnalysisResults(prev => ({
+          ...prev,
+          [targetFen]: {
+            score: isWhiteMove ? actualScore : -actualScore, // store relative to white for display
             classification,
             bestmove: prevEval.bestmove,
             uciBestMove: prevEval.bestmove,
             analysis: '...',
             cpLoss
-          };
+          }
+        }));
 
-          // Filter: Only AI analyze user moves that are inaccuracy/mistake/blunder
-          const moveColor = isWhiteMove ? 'white' : 'black';
-          const isBadMove = ['inaccuracy', 'mistake', 'blunder'].includes(classification);
-          
-          if (moveColor === userColor && isBadMove) {
-            movesToAI.push({
-              index: i,
-              fen: prevFen,
-              userMove: move.san,
-              classification,
-              movingPlayer: moveColor
-            });
+        // Queue only the user's inaccurate/mistake/blunder moves for AI analysis
+        const moveColor = isWhiteMove ? 'white' : 'black';
+        const isBadMove = ['inaccuracy', 'mistake', 'blunder'].includes(classification);
+        if (moveColor === userColor && isBadMove) {
+          const entry = { index: i, fen: prevFen, userMove: move.san, classification, movingPlayer: moveColor, cpLoss };
+          allBadMoveEntries.push(entry);
+          // Phase 1 earmarks the first bad moves found and kicks off their
+          // analysis immediately — no waiting for the full eval to finish.
+          if (phase1Moves.length < PHASE1_LIMIT) {
+            phase1Moves.push(entry);
+            phase1Indices.add(i);
+            if (phase1Moves.length >= PHASE1_LIMIT) startPhase1();
           }
         }
+      };
+
+      // Step 1: STREAM engine evaluations. Each result is emitted as found, so
+      // moves get classified + rendered incrementally instead of at the end.
+      // Phase 1 AI analysis runs concurrently with this stream.
+      const evalRes = await fetch('http://127.0.0.1:3001/api/evaluate-stream', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ fens: allFens })
       });
 
-      setBatchAnalysisResults(currentResults);
+      if (!evalRes.ok) throw new Error("Failed to fetch evaluations");
 
-      if (movesToAI.length === 0) {
-        setIsLoading(false);
-        setAnalysisProgress(100);
-        return;
+      const reader = evalRes.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = '';
+      let evalsReceived = 0;
+      const totalEvals = allFens.length;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+
+        // SSE events are separated by a blank line (\n\n)
+        let sepIdx;
+        while ((sepIdx = buffer.indexOf('\n\n')) !== -1) {
+          const rawEvent = buffer.substring(0, sepIdx);
+          buffer = buffer.substring(sepIdx + 2);
+
+          const dataStr = rawEvent.startsWith('data: ') ? rawEvent.substring(6) : null;
+          if (!dataStr || dataStr === '[DONE]') continue;
+          try {
+            const data = JSON.parse(dataStr);
+            if (data.error) {
+              console.error('[Eval Stream] error:', data.error);
+              continue;
+            }
+            if (data.result) {
+              evalMap[data.result.fen] = data.result;
+              evalsReceived++;
+              // allFens[data.index] is now known -> it unblocks move (index-1)'s
+              // "after" and move index's "before".
+              tryClassifyMove(data.index - 1);
+              tryClassifyMove(data.index);
+              // Eval phase occupies the first half of the progress bar
+              setAnalysisProgress(prev => Math.max(prev, Math.round((evalsReceived / totalEvals) * 50)));
+            }
+          } catch (e) {
+            console.error("Error parsing eval stream data", e);
+          }
+        }
       }
 
-      // Step 3: Stream AI analysis for the filtered bad moves
-      const fensParam = JSON.stringify(movesToAI);
-      const url = `http://127.0.0.1:3001/api/analyze-stream?fens=${encodeURIComponent(fensParam)}&model=${selectedModel}&language=${language}`;
+      // Eval stream finished. Safety-classify any moves still pending, then
+      // mark eval done and let phase 2 proceed once phase 1 also finishes.
+      for (let i = 0; i < history.length; i++) tryClassifyMove(i);
 
-      const eventSource = new EventSource(url);
+      if (allBadMoveEntries.length === 0) { finish(); return; }
 
-      eventSource.onmessage = (event) => {
-        if (event.data === '[DONE]') {
-          eventSource.close();
-          setIsLoading(false);
-          setAnalysisProgress(100);
-          return;
-        }
-
-        try {
-          const data = JSON.parse(event.data);
-          if (data.index !== undefined && data.result) {
-            const targetFen = history[data.index].after;
-            setBatchAnalysisResults(prev => ({
-              ...prev,
-              [targetFen]: {
-                ...prev[targetFen],
-                analysis: data.result.analysis,
-                bestmove: data.result.bestmove,
-                classification: data.result.classification || prev[targetFen].classification
-              }
-            }));
-            
-            const progress = Math.round(((movesToAI.findIndex(m => m.index === data.index) + 1) / movesToAI.length) * 100);
-            setAnalysisProgress(progress);
-          }
-        } catch (e) {
-          console.error("Error parsing SSE data", e);
-        }
-      };
-
-      eventSource.onerror = (err) => {
-        console.error("SSE Error", err);
-        eventSource.close();
-        setIsLoading(false);
-      };
+      evalDone = true;
+      // If fewer than PHASE1_LIMIT bad moves were found, start phase 1 now with
+      // whatever we have; otherwise it already started mid-stream.
+      if (!phase1Started) startPhase1();
+      maybeStartPhase2();
 
     } catch (err) {
       console.error("Analysis failed:", err);
